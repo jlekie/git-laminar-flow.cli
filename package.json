@@ -1,0 +1,17 @@
+{
+  "name": "@jlekie/git-laminar-flow",
+  "version": "1.0.0-alpha.1",
+  "license": "UNLICENSED",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": "dist/run.js",
+  "scripts": {
+    "build": "tsc --build",
+    "watch": "tsc --watch",
+    "start": "node dist/run.js start"
+  },
+  "files": [
+    "/src",
+    "/dist"
+  ]
+}
