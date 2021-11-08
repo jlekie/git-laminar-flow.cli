@@ -10,9 +10,9 @@ export interface ExecOptions {
 
 export async function exec(cmd: string, { cwd, stdout, dryRun }: ExecOptions = {}) {
     if (cwd)
-        stdout?.write(Chalk.cyan(`Executing "${cmd}" [${cwd}]...\n`));
+        stdout?.write(Chalk.gray(`Executing "${cmd}" [${cwd}]...\n`));
     else
-        stdout?.write(Chalk.cyan(`Executing "${cmd}"...\n`));
+        stdout?.write(Chalk.gray(`Executing "${cmd}"...\n`));
 
     if (dryRun)
         return;
@@ -29,9 +29,9 @@ export async function exec(cmd: string, { cwd, stdout, dryRun }: ExecOptions = {
 }
 export async function execCmd(cmd: string, { cwd, stdout, dryRun }: ExecOptions = {}) {
     if (cwd)
-        stdout?.write(Chalk.cyan(`Executing "${cmd}" [${cwd}]...\n`));
+        stdout?.write(Chalk.gray(`Executing "${cmd}" [${cwd}]...\n`));
     else
-        stdout?.write(Chalk.cyan(`Executing "${cmd}"...\n`));
+        stdout?.write(Chalk.gray(`Executing "${cmd}"...\n`));
 
     if (dryRun)
         return;

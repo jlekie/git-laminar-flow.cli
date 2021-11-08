@@ -6,6 +6,8 @@ import * as FS from 'fs-extra';
 import * as Yaml from 'js-yaml';
 import * as Glob from 'glob-promise';
 
+import * as Chalk from 'chalk';
+
 import * as Zod from 'zod';
 
 import { exec, execCmd, ExecOptions } from './exec';
@@ -115,16 +117,39 @@ export class Config {
         return `${targetContext.identifier}/${parts[parts.length - 1]}`;
     }
 
-    public async checkoutFeature(featureFqn: string, { stdout, dryRun }: ExecParams = {}) {
+    public findFeatures(featureFqn: string): Feature[] {
+        return [
+            ...this.features.filter(f => f.fqn === featureFqn),
+            ..._.flatMap(this.submodules, s => s.config.findFeatures(featureFqn))
+        ];
+    }
+
+    public async initializeFeature(featureFqn: string, { stdout, dryRun }: ExecParams = {}) {
         await Bluebird.map(this.features.filter(f => f.fqn === featureFqn), async feature => {
-            if (!await feature.branchExists({ stdout, dryRun }))
+            if (!await feature.branchExists({ stdout, dryRun })) {
                 await feature.createBranch({ stdout, dryRun });
+                stdout?.write(Chalk.blue(`Branch ${feature.branchName} created [${this.path}]\n`));
+            }
         }, { concurrency: 1 });
 
         await Bluebird.map(this.submodules, async submodule => {
-            const submoduleConfig = await submodule.loadConfig();
-            await submoduleConfig.checkoutFeature(featureFqn, { stdout, dryRun });
+            await submodule.config.initializeFeature(featureFqn, { stdout, dryRun });
         }, { concurrency: 1 });
+    }
+
+    public async save({ stdout, dryRun }: ExecParams = {}) {
+        const configPath = Path.join(this.path, '.gitflow.yml');
+
+        if (!dryRun) {
+            const content = Yaml.dump(this);
+            await FS.writeFile(configPath, content, 'utf8');
+        }
+
+        stdout?.write(Chalk.blue(`Config written to ${configPath}\n`));
+    }
+
+    public async checkoutBranch(branchName: string, { stdout, dryRun }: ExecParams = {}) {
+        await exec(`git checkout ${branchName}`, { cwd: this.path, stdout, dryRun });
     }
 
     // public toJSON() {
@@ -235,7 +260,7 @@ export class Feature {
         this.branchName = params.branchName;
     }
 
-    public register(parentConfig: Config) {
+    public async register(parentConfig: Config) {
         this.#initialized = true;
 
         this.#parentConfig = parentConfig;
@@ -249,6 +274,9 @@ export class Feature {
 
     public async createBranch({ stdout, dryRun }: ExecParams = {}) {
         await exec(`git branch ${this.branchName}`, { cwd: this.parentConfig?.path, stdout, dryRun });
+    }
+    public async checkoutBranch({ stdout, dryRun }: ExecParams = {}) {
+        await exec(`git checkout ${this.branchName}`, { cwd: this.parentConfig?.path, stdout, dryRun });
     }
 }
 
@@ -281,7 +309,7 @@ export class Release {
         this.branchName = params.branchName;
     }
 
-    public register(parentConfig: Config) {
+    public async register(parentConfig: Config) {
         this.#initialized = true;
 
         this.#parentConfig = parentConfig;
