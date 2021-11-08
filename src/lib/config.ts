@@ -28,11 +28,22 @@ export const ConfigReleaseSchema = Zod.object({
     fqn: Zod.string(),
     branchName: Zod.string()
 });
+export const ConfigHotfixSchema = Zod.object({
+    fqn: Zod.string(),
+    branchName: Zod.string()
+});
+export const ConfigSupportSchema = Zod.object({
+    fqn: Zod.string(),
+    masterBranchName: Zod.string(),
+    developBranchName: Zod.string()
+});
 export const ConfigSchema = Zod.object({
     identifier: Zod.string(),
     submodules: ConfigSubmoduleSchema.array().optional(),
     features: ConfigFeatureSchema.array().optional(),
-    releases: ConfigReleaseSchema.array().optional()
+    releases: ConfigReleaseSchema.array().optional(),
+    hotfixes: ConfigHotfixSchema.array().optional(),
+    supports: ConfigSupportSchema.array().optional()
 });
 
 export async function loadConfig(path: string, parentConfig?: Config) {
@@ -123,6 +134,12 @@ export class Config {
             ..._.flatMap(this.submodules, s => s.config.findFeatures(featureFqn))
         ];
     }
+    public findReleases(releaseFqn: string): Release[] {
+        return [
+            ...this.releases.filter(f => f.fqn === releaseFqn),
+            ..._.flatMap(this.submodules, s => s.config.findReleases(releaseFqn))
+        ];
+    }
 
     public async initializeFeature(featureFqn: string, { stdout, dryRun }: ExecParams = {}) {
         await Bluebird.map(this.features.filter(f => f.fqn === featureFqn), async feature => {
@@ -148,11 +165,26 @@ export class Config {
         stdout?.write(Chalk.blue(`Config written to ${configPath}\n`));
     }
 
+    public async fetch({ stdout, dryRun }: ExecParams = {}) {
+        await exec(`git fetch --all`, { cwd: this.path, stdout, dryRun });
+    }
+
     public async checkoutBranch(branchName: string, { stdout, dryRun }: ExecParams = {}) {
         await exec(`git checkout ${branchName}`, { cwd: this.path, stdout, dryRun });
     }
+    public async deleteBranch(branchName: string, { stdout, dryRun }: ExecParams = {}) {
+        await exec(`git branch -d ${branchName}`, { cwd: this.path, stdout, dryRun });
+    }
+
     public async merge(branchName: string, { stdout, dryRun }: ExecParams = {}) {
         await exec(`git merge ${branchName}`, { cwd: this.path, stdout, dryRun });
+    }
+    public async abortMerge({ stdout, dryRun }: ExecParams = {}) {
+        await exec(`git merge --abort`, { cwd: this.path, stdout, dryRun });
+    }
+
+    public async resolveCurrentBranch({ stdout, dryRun }: ExecParams = {}) {
+        return execCmd(`git rev-parse --abbrev-ref HEAD`, { cwd: this.path, stdout, dryRun });
     }
 
     // public toJSON() {
@@ -318,8 +350,20 @@ export class Release {
         this.#parentConfig = parentConfig;
     }
 
+    public async branchExists({ stdout }: ExecParams = {}) {
+        const result = await execCmd(`git branch --list ${this.branchName}`, { cwd: this.parentConfig?.path, stdout });
+
+        return !!result;
+    }
     public async createBranch({ stdout, dryRun }: ExecParams = {}) {
         await exec(`git branch ${this.branchName}`, { cwd: this.parentConfig?.path, stdout, dryRun })
+    }
+
+    public async initialize({ stdout, dryRun }: ExecParams = {}) {
+        if (!await this.branchExists({ stdout, dryRun })) {
+            await this.createBranch({ stdout, dryRun });
+            stdout?.write(Chalk.blue(`Branch ${this.branchName} created [${this.parentConfig.path}]\n`));
+        }
     }
 }
 

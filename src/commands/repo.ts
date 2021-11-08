@@ -27,3 +27,24 @@ export class CheckoutCommand extends BaseCommand {
         await Bluebird.map(targetConfigs, config => config.checkoutBranch(this.branchName, { stdout: this.context.stdout, dryRun: this.dryRun }), { concurrency: 1 });
     }
 }
+
+export class FetchCommand extends BaseCommand {
+    static paths = [['fetch']];
+
+    submodules = Option.Array('--submodules', [ '**' ]);
+
+    static usage = Command.Usage({
+        description: 'Fetch'
+    });
+
+    public async execute() {
+        const config = await loadConfig(this.configPath);
+
+        const targetConfigs = [
+            config,
+            ...config.submodules.filter(s => this.submodules.some(pattern => Minimatch(s.name, pattern))).map(s => s.config)
+        ];
+
+        await Bluebird.map(targetConfigs, config => config.fetch({ stdout: this.context.stdout, dryRun: this.dryRun }), { concurrency: 1 });
+    }
+}

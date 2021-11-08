@@ -2,6 +2,8 @@ import { Command, Option } from 'clipanion';
 import * as Minimatch from 'minimatch';
 import * as Bluebird from 'bluebird';
 
+import * as Chalk from 'chalk';
+
 import { BaseCommand } from './common';
 
 import { loadConfig, Config, Feature } from '../lib/config';
@@ -80,9 +82,10 @@ export class SyncCommand extends BaseCommand {
     static paths = [['feature', 'sync']];
 
     featureName = Option.String('--feature', { required: true });
+    branchName = Option.String('--branch', 'develop');
 
     static usage = Command.Usage({
-        description: 'Sync feature from develop'
+        description: 'Sync feature from branch'
     });
 
     public async execute() {
@@ -90,7 +93,77 @@ export class SyncCommand extends BaseCommand {
         const featureFqn = config.resolveFeatureFqn(this.featureName);
 
         const features = config.findFeatures(featureFqn);
-        await Bluebird.map(features, feature => feature.checkoutBranch({ stdout: this.context.stdout, dryRun: this.dryRun }));
-        await Bluebird.map(features, feature => feature.parentConfig.merge('develop', { stdout: this.context.stdout, dryRun: this.dryRun }));
+        await Bluebird.map(features, async feature => {
+            const baseBranch = await feature.parentConfig.resolveCurrentBranch({ stdout: this.context.stdout });
+
+            try {
+                await feature.checkoutBranch({ stdout: this.context.stdout, dryRun: this.dryRun })
+                await feature.parentConfig.merge(this.branchName, { stdout: this.context.stdout, dryRun: this.dryRun }).catch(async () => {
+                    this.context.stdout.write(Chalk.yellow(`Merge failed, aborting...\n`));
+                    await feature.parentConfig.abortMerge({ stdout: this.context.stdout, dryRun: this.dryRun });
+                });
+            }
+            finally {
+                if (baseBranch)
+                    await feature.parentConfig.checkoutBranch(baseBranch, { stdout: this.context.stdout, dryRun: this.dryRun });
+            }
+        }, { concurrency: 1 });
+    }
+}
+
+export class MergeCommand extends BaseCommand {
+    static paths = [['feature', 'merge']];
+
+    featureName = Option.String('--feature', { required: true });
+
+    static usage = Command.Usage({
+        description: 'Merge feature into develop'
+    });
+
+    public async execute() {
+        const config = await loadConfig(this.configPath);
+        const featureFqn = config.resolveFeatureFqn(this.featureName);
+
+        const features = config.findFeatures(featureFqn);
+        await Bluebird.map(features, async feature => {
+            const baseBranch = await feature.parentConfig.resolveCurrentBranch({ stdout: this.context.stdout });
+
+            try {
+                await feature.parentConfig.checkoutBranch('develop', { stdout: this.context.stdout, dryRun: this.dryRun })
+                await feature.parentConfig.merge(feature.branchName, { stdout: this.context.stdout, dryRun: this.dryRun }).catch(async () => {
+                    this.context.stdout.write(Chalk.yellow(`Merge failed, aborting...\n`));
+                    await feature.parentConfig.abortMerge({ stdout: this.context.stdout, dryRun: this.dryRun });
+                });
+            }
+            finally {
+                if (baseBranch)
+                    await feature.parentConfig.checkoutBranch(baseBranch, { stdout: this.context.stdout, dryRun: this.dryRun });
+            }
+        }, { concurrency: 1 });
+    }
+}
+
+export class CloseCommand extends BaseCommand {
+    static paths = [['feature', 'close']];
+
+    featureName = Option.String('--feature', { required: true });
+
+    static usage = Command.Usage({
+        description: 'Close feature'
+    });
+
+    public async execute() {
+        const config = await loadConfig(this.configPath);
+        const featureFqn = config.resolveFeatureFqn(this.featureName);
+
+        const features = config.findFeatures(featureFqn);
+        for (const feature of features) {
+            await feature.parentConfig.checkoutBranch('develop', { stdout: this.context.stdout, dryRun: this.dryRun });
+            await feature.parentConfig.deleteBranch(feature.branchName, { stdout: this.context.stdout, dryRun: this.dryRun });
+
+            const idx = feature.parentConfig.features.indexOf(feature);
+            feature.parentConfig.features.splice(idx, 1);
+            await feature.parentConfig.save({ stdout: this.context.stdout, dryRun: this.dryRun });
+        }
     }
 }
