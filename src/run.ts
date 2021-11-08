@@ -14,7 +14,9 @@ const cli = new Cli({
 
 cli.register(InitCommand)
 cli.register(SubmoduleCommands.CloneCommand);
+
 cli.register(FeatureCommands.CreateCommand);
+cli.register(FeatureCommands.CheckoutCommand);
 
 cli.register(Builtins.HelpCommand);
 cli.register(Builtins.VersionCommand);
