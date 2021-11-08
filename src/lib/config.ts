@@ -151,6 +151,9 @@ export class Config {
     public async checkoutBranch(branchName: string, { stdout, dryRun }: ExecParams = {}) {
         await exec(`git checkout ${branchName}`, { cwd: this.path, stdout, dryRun });
     }
+    public async merge(branchName: string, { stdout, dryRun }: ExecParams = {}) {
+        await exec(`git merge ${branchName}`, { cwd: this.path, stdout, dryRun });
+    }
 
     // public toJSON() {
     //     return {

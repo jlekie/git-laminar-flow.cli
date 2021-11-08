@@ -17,6 +17,7 @@ cli.register(SubmoduleCommands.CloneCommand);
 
 cli.register(FeatureCommands.CreateCommand);
 cli.register(FeatureCommands.CheckoutCommand);
+cli.register(FeatureCommands.SyncCommand);
 
 cli.register(RepoCommands.CheckoutCommand);
 

@@ -9,7 +9,7 @@ import { loadConfig, Config, Feature } from '../lib/config';
 export class CheckoutCommand extends BaseCommand {
     static paths = [['checkout']];
 
-    branchName = Option.String('--branch', { required: true });
+    branchName = Option.String('--branch', 'develop');
     submodules = Option.Array('--submodules', [ '**' ]);
 
     static usage = Command.Usage({

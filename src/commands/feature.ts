@@ -62,7 +62,6 @@ export class CheckoutCommand extends BaseCommand {
     static paths = [['feature', 'checkout']];
 
     featureName = Option.String('--feature', { required: true });
-    submoduleName = Option.String('--submodule');
 
     static usage = Command.Usage({
         description: 'Checkout feature'
@@ -74,5 +73,24 @@ export class CheckoutCommand extends BaseCommand {
 
         const features = config.findFeatures(featureFqn);
         await Bluebird.map(features, feature => feature.checkoutBranch({ stdout: this.context.stdout, dryRun: this.dryRun }));
+    }
+}
+
+export class SyncCommand extends BaseCommand {
+    static paths = [['feature', 'sync']];
+
+    featureName = Option.String('--feature', { required: true });
+
+    static usage = Command.Usage({
+        description: 'Sync feature from develop'
+    });
+
+    public async execute() {
+        const config = await loadConfig(this.configPath);
+        const featureFqn = config.resolveFeatureFqn(this.featureName);
+
+        const features = config.findFeatures(featureFqn);
+        await Bluebird.map(features, feature => feature.checkoutBranch({ stdout: this.context.stdout, dryRun: this.dryRun }));
+        await Bluebird.map(features, feature => feature.parentConfig.merge('develop', { stdout: this.context.stdout, dryRun: this.dryRun }));
     }
 }
