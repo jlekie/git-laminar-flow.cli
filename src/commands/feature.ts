@@ -132,7 +132,7 @@ export class MergeCommand extends BaseCommand {
 
             try {
                 await feature.parentConfig.checkoutBranch('develop', { stdout: this.context.stdout, dryRun: this.dryRun })
-                await feature.parentConfig.merge(feature.branchName, { squash: true, stdout: this.context.stdout, dryRun: this.dryRun }).catch(async () => {
+                await feature.parentConfig.merge(feature.branchName, { stdout: this.context.stdout, dryRun: this.dryRun }).catch(async () => {
                     this.context.stdout.write(Chalk.yellow(`Merge failed, aborting...\n`));
                     await feature.parentConfig.abortMerge({ stdout: this.context.stdout, dryRun: this.dryRun });
                 });
