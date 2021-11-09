@@ -22,6 +22,7 @@ cli.register(FeatureCommands.MergeCommand);
 cli.register(FeatureCommands.CloseCommand);
 
 cli.register(ReleaseCommands.CreateCommand);
+cli.register(ReleaseCommands.CloseCommand);
 
 cli.register(RepoCommands.CheckoutCommand);
 cli.register(RepoCommands.FetchCommand);
