@@ -74,7 +74,9 @@ export class CheckoutCommand extends BaseCommand {
         const featureFqn = config.resolveFeatureFqn(this.featureName);
 
         const features = config.findFeatures(featureFqn);
-        await Bluebird.map(features, feature => feature.checkoutBranch({ stdout: this.context.stdout, dryRun: this.dryRun }));
+        await Bluebird.map(features, feature => feature.checkoutBranch({ stdout: this.context.stdout, dryRun: this.dryRun }), {
+            concurrency: 1
+        });
     }
 }
 
@@ -130,7 +132,7 @@ export class MergeCommand extends BaseCommand {
 
             try {
                 await feature.parentConfig.checkoutBranch('develop', { stdout: this.context.stdout, dryRun: this.dryRun })
-                await feature.parentConfig.merge(feature.branchName, { stdout: this.context.stdout, dryRun: this.dryRun }).catch(async () => {
+                await feature.parentConfig.merge(feature.branchName, { squash: true, stdout: this.context.stdout, dryRun: this.dryRun }).catch(async () => {
                     this.context.stdout.write(Chalk.yellow(`Merge failed, aborting...\n`));
                     await feature.parentConfig.abortMerge({ stdout: this.context.stdout, dryRun: this.dryRun });
                 });
@@ -158,7 +160,9 @@ export class CloseCommand extends BaseCommand {
 
         const features = config.findFeatures(featureFqn);
         for (const feature of features) {
-            await feature.parentConfig.checkoutBranch('develop', { stdout: this.context.stdout, dryRun: this.dryRun });
+            if (await feature.parentConfig.resolveCurrentBranch({ stdout: this.context.stdout, dryRun: this.dryRun }) === feature.branchName)
+                await feature.parentConfig.checkoutBranch('develop', { stdout: this.context.stdout, dryRun: this.dryRun });
+
             await feature.parentConfig.deleteBranch(feature.branchName, { stdout: this.context.stdout, dryRun: this.dryRun });
 
             const idx = feature.parentConfig.features.indexOf(feature);

@@ -176,8 +176,13 @@ export class Config {
         await exec(`git branch -d ${branchName}`, { cwd: this.path, stdout, dryRun });
     }
 
-    public async merge(branchName: string, { stdout, dryRun }: ExecParams = {}) {
-        await exec(`git merge ${branchName}`, { cwd: this.path, stdout, dryRun });
+    public async merge(branchName: string, { squash, stdout, dryRun }: ExecParams & MergeParams = {}) {
+        if (squash) {
+            await exec(`git merge ${branchName} --squash`, { cwd: this.path, stdout, dryRun });
+        }
+        else {
+            await exec(`git merge ${branchName}`, { cwd: this.path, stdout, dryRun });
+        }
     }
     public async abortMerge({ stdout, dryRun }: ExecParams = {}) {
         await exec(`git merge --abort`, { cwd: this.path, stdout, dryRun });
@@ -368,3 +373,6 @@ export class Release {
 }
 
 export type ExecParams = Omit<ExecOptions, 'cwd'> & { basePath?: string };
+export interface MergeParams {
+    squash?: boolean;
+}
