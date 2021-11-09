@@ -178,7 +178,7 @@ export class Config {
 
     public async merge(branchName: string, { squash, stdout, dryRun }: ExecParams & MergeParams = {}) {
         if (squash) {
-            await exec(`git merge ${branchName} --squash`, { cwd: this.path, stdout, dryRun });
+            await exec(`git merge --squash ${branchName}`, { cwd: this.path, stdout, dryRun });
         }
         else {
             await exec(`git merge ${branchName}`, { cwd: this.path, stdout, dryRun });
