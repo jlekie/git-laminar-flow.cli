@@ -23,7 +23,7 @@ export async function exec(cmd: string, { cwd, stdout, dryRun }: ExecOptions = {
         proc.stdout.on('data', d => stdout?.write(Chalk.gray(d)));
         proc.stderr.on('data', d => stdout?.write(Chalk.gray(d)));
 
-        proc.on('close', (code) => code !== 0 ? reject(new Error(`Exited with code ${code}`)) : resolve());
+        proc.on('close', (code) => code !== 0 ? reject(new Error(`${cmd} <${cwd}> Exited with code ${code}`)) : resolve());
         proc.on('error', (err) => reject(err));
     });
 }

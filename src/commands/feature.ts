@@ -11,8 +11,8 @@ import { loadConfig, Config, Feature } from '../lib/config';
 export class CreateCommand extends BaseCommand {
     static paths = [['feature', 'create']];
 
-    featureName = Option.String('--feature', { required: true });
-    submodules = Option.Array('--submodules', []);
+    featureName = Option.String('--name', { required: true });
+    submodules = Option.Array('--submodules');
     branchName = Option.String('--branch-name', { required: false });
 
     checkout = Option.Boolean('--checkout', false);
@@ -45,7 +45,7 @@ export class CreateCommand extends BaseCommand {
 
         await addFeature(config);
 
-        const submodules = config.submodules.filter(s => this.submodules.some(pattern => Minimatch(s.name, pattern)));
+        const submodules = config.submodules.filter(s => (this.submodules || ['**']).some(pattern => Minimatch(s.name, pattern)));
         for (const submodule of submodules)
             await addFeature(submodule.config);
 
@@ -77,6 +77,28 @@ export class CheckoutCommand extends BaseCommand {
         await Bluebird.map(features, feature => feature.checkoutBranch({ stdout: this.context.stdout, dryRun: this.dryRun }), {
             concurrency: 1
         });
+    }
+}
+
+export class CommitCommand extends BaseCommand {
+    static paths = [['feature', 'commit']];
+
+    featureName = Option.String('--feature', { required: true });
+    message = Option.String('--message', { required: false })
+
+    static usage = Command.Usage({
+        description: 'Commit feature'
+    });
+
+    public async execute() {
+        const config = await loadConfig(this.configPath);
+        const featureFqn = config.resolveFeatureFqn(this.featureName);
+
+        const features = config.findFeatures(featureFqn);
+        for (const feature of features) {
+            const message = this.message ?? `feature ${feature.fqn} checkpoint`;
+            await feature.parentConfig.commit(message, { stdout: this.context.stdout, dryRun: this.dryRun });
+        }
     }
 }
 
@@ -117,6 +139,7 @@ export class MergeCommand extends BaseCommand {
     static paths = [['feature', 'merge']];
 
     featureName = Option.String('--feature', { required: true });
+    squash = Option.Boolean('--squash', false);
 
     static usage = Command.Usage({
         description: 'Merge feature into develop'
@@ -128,18 +151,27 @@ export class MergeCommand extends BaseCommand {
 
         const features = config.findFeatures(featureFqn);
         await Bluebird.map(features, async feature => {
-            const baseBranch = await feature.parentConfig.resolveCurrentBranch({ stdout: this.context.stdout });
-
             try {
-                await feature.parentConfig.checkoutBranch('develop', { stdout: this.context.stdout, dryRun: this.dryRun })
-                await feature.parentConfig.merge(feature.branchName, { stdout: this.context.stdout, dryRun: this.dryRun }).catch(async () => {
-                    this.context.stdout.write(Chalk.yellow(`Merge failed, aborting...\n`));
-                    await feature.parentConfig.abortMerge({ stdout: this.context.stdout, dryRun: this.dryRun });
-                });
+                if (await feature.parentConfig.isDirty({ stdout: this.context.stdout }))
+                    throw new Error(`Workspace ${feature.parentConfig.path} has uncommitted changes, aborting`);
+
+                const baseBranch = await feature.parentConfig.resolveCurrentBranch({ stdout: this.context.stdout });
+
+                try {
+                    await feature.parentConfig.checkoutBranch('develop', { stdout: this.context.stdout, dryRun: this.dryRun })
+                    await feature.parentConfig.merge(feature.branchName, { squash: this.squash, stdout: this.context.stdout, dryRun: this.dryRun }).catch(async () => {
+                        this.context.stdout.write(Chalk.yellow(`Merge failed, aborting...\n`));
+                        await feature.parentConfig.abortMerge({ stdout: this.context.stdout, dryRun: this.dryRun });
+                    });
+                    await feature.parentConfig.commit(`feature ${feature.fqn} merge`, { stdout: this.context.stdout, dryRun: this.dryRun });
+                }
+                finally {
+                    if (baseBranch)
+                        await feature.parentConfig.checkoutBranch(baseBranch, { stdout: this.context.stdout, dryRun: this.dryRun });
+                }
             }
-            finally {
-                if (baseBranch)
-                    await feature.parentConfig.checkoutBranch(baseBranch, { stdout: this.context.stdout, dryRun: this.dryRun });
+            catch (err) {
+                this.context.stderr.write(Chalk.red(err.toString()) + '\n');
             }
         }, { concurrency: 1 });
     }

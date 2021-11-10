@@ -1,25 +1,26 @@
-import { Command, Option } from 'clipanion';
+// import { Command, Option } from 'clipanion';
+// import * as Chalk from 'chalk';
 
-import { BaseCommand } from './common';
-import { init } from '../lib/actions';
+// import * as Path from 'path';
+// import * as FS from 'fs-extra';
 
-export class InitCommand extends BaseCommand {
-    static paths = [['init']];
+// import { BaseCommand } from './common';
+// import { init } from '../lib/actions';
+// import { loadConfig } from '../lib/config';
 
-    reposBasePath = Option.String('--repo-base-path')
+// export class InitCommand extends BaseCommand {
+//     static paths = [['init']];
 
-    static usage = Command.Usage({
-        description: 'Initialize repo',
-        details: 'This will initialize the repo'
-    });
+//     reposBasePath = Option.String('--repo-base-path')
 
-    public async execute() {
-        await init({
-            repoBasePath: this.reposBasePath,
-            configPath: this.configPath,
-            stdout: this.context.stdout,
-            createGitmodulesConfig: true,
-            dryRun: this.dryRun
-        });
-    }
-}
+//     static usage = Command.Usage({
+//         description: 'Initialize repo',
+//         details: 'This will initialize the repo'
+//     });
+
+//     public async execute() {
+//         const config = await loadConfig(this.configPath);
+
+//         await config.init({ stdout: this.context.stdout, dryRun: this.dryRun });
+//     }
+// }
