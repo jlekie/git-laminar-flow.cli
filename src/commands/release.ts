@@ -11,9 +11,12 @@ import { loadConfig, Config, Release } from '../lib/config';
 export class CreateCommand extends BaseCommand {
     static paths = [['release', 'create']];
 
-    releaseName = Option.String('--release', { required: true });
-    submodules = Option.Array('--submodules', []);
+    releaseName = Option.String('--name', { required: true });
     branchName = Option.String('--branch-name', { required: false });
+    from = Option.String('--from', 'develop');
+
+    include = Option.Array('--include');
+    exclude = Option.Array('--exclude');
 
     checkout = Option.Boolean('--checkout', false);
 
@@ -23,41 +26,32 @@ export class CreateCommand extends BaseCommand {
 
     public async execute() {
         const config = await loadConfig(this.configPath);
-        const featureFqn = config.resolveFeatureFqn(this.releaseName);
+        const targetConfigs = await config.resolveFilteredConfigs({
+            included: this.include,
+            excluded: this.exclude
+        });
 
+        const featureFqn = config.resolveFeatureFqn(this.releaseName);
         const branchName = this.branchName ?? `release/${this.releaseName}`;
 
-        const updatedConfigs: Config[] = [];
-        const addRelease = async (config: Config) => {
-            if (config.releases.some(f => f.fqn === featureFqn))
-                return;
+        for (const config of targetConfigs) {
+            if (config.releases.some(f => f.name === featureFqn))
+                continue;
 
             const release = new Release({
-                fqn: featureFqn,
-                branchName
+                name: featureFqn,
+                branchName,
+                sourceSha: await config.resolveCommitSha(this.from)
             });
             config.releases.push(release);
+            await release.register(config);
 
-            updatedConfigs.push(config);
-
-            await release.register(config);            
-        }
-
-        await addRelease(config);
-
-        const submodules = config.submodules.filter(s => this.submodules.some(pattern => Minimatch(s.name, pattern)));
-        for (const submodule of submodules)
-            await addRelease(submodule.config);
-
-        await Bluebird.map(updatedConfigs, config => config.save({ stdout: this.context.stdout, dryRun: this.dryRun }))
-
-        const releases = config.findReleases(featureFqn);
-        await Bluebird.map(releases, async release => {
-            await release.initialize({ stdout: this.context.stdout, dryRun: this.dryRun })
+            await release.init({ stdout: this.context.stdout, dryRun: this.dryRun });
+            await config.save({ stdout: this.context.stdout, dryRun: this.dryRun });
 
             if (this.checkout)
-                await release.parentConfig.checkoutBranch(release.branchName, { stdout: this.context.stdout, dryRun: this.dryRun });
-        }, { concurrency: 1 });
+                config.checkoutBranch(release.branchName, { stdout: this.context.stdout, dryRun: this.dryRun });
+        }
     }
 }
 

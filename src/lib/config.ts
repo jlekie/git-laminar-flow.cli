@@ -5,6 +5,7 @@ import * as Path from 'path';
 import * as FS from 'fs-extra';
 import * as Yaml from 'js-yaml';
 import * as Glob from 'glob-promise';
+import * as Minimatch from 'minimatch';
 
 import * as Chalk from 'chalk';
 
@@ -19,19 +20,22 @@ export const ConfigSubmoduleSchema = Zod.object({
     path: Zod.string()
 });
 export const ConfigFeatureSchema = Zod.object({
-    fqn: Zod.string(),
-    branchName: Zod.string()
+    name: Zod.string(),
+    branchName: Zod.string(),
+    sourceSha: Zod.string()
 });
 export const ConfigReleaseSchema = Zod.object({
-    fqn: Zod.string(),
-    branchName: Zod.string()
+    name: Zod.string(),
+    branchName: Zod.string(),
+    sourceSha: Zod.string().optional()
 });
 export const ConfigHotfixSchema = Zod.object({
-    fqn: Zod.string(),
-    branchName: Zod.string()
+    name: Zod.string(),
+    branchName: Zod.string(),
+    sourceSha: Zod.string().optional()
 });
 export const ConfigSupportSchema = Zod.object({
-    fqn: Zod.string(),
+    name: Zod.string(),
     masterBranchName: Zod.string(),
     developBranchName: Zod.string()
 });
@@ -59,6 +63,25 @@ export async function loadConfig(path: string, parentConfig?: Config, pathspecPr
     await config.register(Path.dirname(Path.resolve(path)), parentConfig, pathspecPrefix);
 
     return config;
+}
+
+export type Artifact = {
+    type: 'unknown';
+    branch?: string;
+} | {
+    type: 'master';
+    branch?: string;
+} | {
+    type: 'develop';
+    branch?: string;
+} | {
+    type: 'feature';
+    branch?: string;
+    feature: Feature;
+} | {
+    type: 'release';
+    branch?: string;
+    release: Release;
 }
 
 export type ConfigParams = Pick<Config, 'identifier' | 'upstreams' | 'submodules' | 'features' | 'releases'>;
@@ -130,7 +153,7 @@ export class Config {
     }
 
     // Register internals (initialize)
-    public async register(path: string, parentConfig?: Config, pathspec: string = '/') {
+    public async register(path: string, parentConfig?: Config, pathspec: string = 'root') {
         this.#initialized = true;
 
         this.#path = path;
@@ -148,39 +171,97 @@ export class Config {
             ...this.submodules.map(s => s.config.flattenConfigs())
         ]);
     }
+    public async resolveFilteredConfigs(params: { included?: string[], excluded?: string[] } = {}): Promise<Config[]> {
+        const configs: Config[] = [];
+        await this.populateFilteredConfigs(configs, params);
 
-    public resolveFeatureFqn(featureName: string) {
-        const parts = featureName.split('/');
+        return configs;
+    }
+    private async populateFilteredConfigs(configs: Config[], params: { included?: string[], excluded?: string[] }) {
+        const artifact = await this.resolveCurrentArtifact();
 
-        let targetContext: Config = this;
-        for (let a = 0; a < parts.length - 1; a++) {
-            const submodule = targetContext.submodules.find(s => s.name === parts[a]);
-            if (!submodule)
-                throw new Error(`Submodule ${parts[a]} not found`);
+        const match = (uri: string) => {
+            const [ type, pattern ] = uri.split('://', 2);
 
-            targetContext = submodule.config;
+            if (type === 'repo') {
+                return Minimatch(this.pathspec, pattern);
+            }
+            else if (type === 'branch') {
+                return artifact.branch && Minimatch(artifact.branch, pattern);
+            }
+            else if (type === 'feature') {
+                return artifact.type === 'feature' && Minimatch(artifact.feature.name, pattern);
+            }
+            else if (type === 'release') {
+                return artifact.type === 'release' && Minimatch(artifact.release.name, pattern);
+            }
+            else {
+                return false;
+            }
         }
 
-        return `${targetContext.identifier}/${parts[parts.length - 1]}`;
+        if ((!params.included || params.included.some(uri => match(uri))) && (!params.excluded || !params.excluded.some(uri => match(uri))))
+            configs.push(this);
+
+        for (const submodule of this.submodules)
+            await submodule.config.populateFilteredConfigs(configs, params);
+    }
+
+    public async resolveCurrentArtifact(): Promise<Artifact> {
+        const currentBranch = await this.resolveCurrentBranch();
+
+        if (currentBranch === 'master') {
+            return { type: 'master', branch: currentBranch };
+        }
+        else if (currentBranch === 'develop') {
+            return { type: 'develop', branch: currentBranch };
+        }
+        else {
+            const feature = this.features.find(f => f.branchName === currentBranch)
+            if (feature)
+                return { type: 'feature', branch: currentBranch, feature };
+
+            const release = this.releases.find(f => f.branchName === currentBranch)
+            if (release)
+                return { type: 'release', branch: currentBranch, release };
+
+            return { type: 'unknown', branch: currentBranch }
+        }
+    }
+
+    public resolveFeatureFqn(featureName: string) {
+        return featureName;
+        // const parts = featureName.split('/');
+
+        // let targetContext: Config = this;
+        // for (let a = 0; a < parts.length - 1; a++) {
+        //     const submodule = targetContext.submodules.find(s => s.name === parts[a]);
+        //     if (!submodule)
+        //         throw new Error(`Submodule ${parts[a]} not found`);
+
+        //     targetContext = submodule.config;
+        // }
+
+        // return `${targetContext.identifier}/${parts[parts.length - 1]}`;
     }
 
     // Find all features with a specified FQN recursively
     public findFeatures(featureFqn: string): Feature[] {
         return [
-            ...this.features.filter(f => f.fqn === featureFqn),
+            ...this.features.filter(f => f.name === featureFqn),
             ..._.flatMap(this.submodules, s => s.config.findFeatures(featureFqn))
         ];
     }
     // Find all releases with a specified FQN recursively
     public findReleases(releaseFqn: string): Release[] {
         return [
-            ...this.releases.filter(f => f.fqn === releaseFqn),
+            ...this.releases.filter(f => f.name === releaseFqn),
             ..._.flatMap(this.submodules, s => s.config.findReleases(releaseFqn))
         ];
     }
 
     public async initializeFeature(featureFqn: string, { stdout, dryRun }: ExecParams = {}) {
-        await Bluebird.map(this.features.filter(f => f.fqn === featureFqn), async feature => {
+        await Bluebird.map(this.features.filter(f => f.name === featureFqn), async feature => {
             if (!await feature.branchExists({ stdout, dryRun })) {
                 await feature.createBranch({ stdout, dryRun });
                 stdout?.write(Chalk.blue(`Branch ${feature.branchName} created [${this.path}]\n`));
@@ -235,13 +316,21 @@ export class Config {
             }
             gitmodulesStream.close();
 
-            stdout?.write(Chalk.blue(`Gitmodules config written to ${gitmodulesPath}\n`));
+            stdout?.write(Chalk.gray(`Gitmodules config written to ${gitmodulesPath}\n`));
         }
 
-        // Initialize submodules
-        for (const submodule of this.submodules) {
-            await submodule.init({ stdout, dryRun });
-        }
+        // // Initialize submodules
+        // for (const submodule of this.submodules) {
+        //     await submodule.init({ stdout, dryRun });
+        // }
+
+        // Initialize features
+        for (const feature of this.features)
+            await feature.init({ stdout, dryRun });
+
+        // Initialize releases
+        for (const release of this.releases)
+            await release.init({ stdout, dryRun });
 
         // Save updated config to disk
         await this.save({ stdout, dryRun });
@@ -256,7 +345,7 @@ export class Config {
             await FS.writeFile(configPath, content, 'utf8');
         }
 
-        stdout?.write(Chalk.blue(`Config written to ${configPath}\n`));
+        stdout?.write(Chalk.gray(`Config written to ${configPath}\n`));
     }
 
     public async exec(cmd: string, { stdout, dryRun }: ExecParams = {}) {
@@ -269,6 +358,14 @@ export class Config {
     public async commit(message: string, { stdout, dryRun }: ExecParams = {}) {
         await exec(`git commit -m "${message}"`, { cwd: this.path, stdout, dryRun });
     }
+    public async tag(tag: string, { source, annotation, stdout, dryRun }: ExecParams & TagParams = {}) {
+        if (source || annotation) {
+            await exec(`git tag -a ${tag}${annotation ? ` -m "${annotation}"` : ''}${source ? ` ${source}` : ''}`, { cwd: this.#path, stdout, dryRun });
+        }
+        else {
+            await exec(`git tag ${tag}`, { cwd: this.#path, stdout, dryRun });
+        }
+    }
 
     public async upstreamExists(upstreamName: string, { stdout, dryRun }: ExecParams = {}) {
         return !!await execCmd(`git remote show ${upstreamName}`, { cwd: this.path, stdout, dryRun }).catch(err => false);
@@ -277,8 +374,11 @@ export class Config {
     public async checkoutBranch(branchName: string, { stdout, dryRun }: ExecParams = {}) {
         await exec(`git checkout ${branchName}`, { cwd: this.path, stdout, dryRun });
     }
-    public async createBranch(branchName: string, { stdout, dryRun }: ExecParams = {}) {
-        await exec(`git branch ${branchName}`, { cwd: this.path, stdout, dryRun });
+    public async createBranch(branchName: string, { source, stdout, dryRun }: ExecParams & CreateBranchParams = {}) {
+        if (source)
+            await exec(`git branch ${branchName} ${source}`, { cwd: this.path, stdout, dryRun });
+        else
+            await exec(`git branch ${branchName}`, { cwd: this.path, stdout, dryRun });
     }
     public async deleteBranch(branchName: string, { stdout, dryRun }: ExecParams = {}) {
         await exec(`git branch -D ${branchName}`, { cwd: this.path, stdout, dryRun });
@@ -295,6 +395,9 @@ export class Config {
             .then(() => false)
             .catch(() => true);
     }
+    public async hasStagedChanges({ stdout, dryRun }: ExecParams = {}) {
+        return !!await execCmd(`git diff --name-only --cached`, { cwd: this.path, stdout, dryRun });
+    }
 
     public async merge(branchName: string, { squash, stdout, dryRun }: ExecParams & MergeParams = {}) {
         if (squash) {
@@ -310,6 +413,10 @@ export class Config {
 
     public async resolveCurrentBranch({ stdout, dryRun }: ExecParams = {}) {
         return execCmd(`git rev-parse --abbrev-ref HEAD`, { cwd: this.path, stdout, dryRun });
+    }
+
+    public async resolveCommitSha(target: string, { stdout, dryRun }: ExecParams = {}) {
+        return execCmd(`git rev-parse ${target}`, { cwd: this.path, stdout, dryRun });
     }
 
     // public toJSON() {
@@ -386,16 +493,17 @@ export class Submodule {
 
     public async loadConfig() {
         const configPath = Path.join(this.resolvePath(), '.gitflow.yml');
-        const config = await loadConfig(configPath, this.parentConfig, `${this.parentConfig.pathspec === '/' ? '/' : this.parentConfig.pathspec + '/'}${this.name}`);
+        const config = await loadConfig(configPath, this.parentConfig, `${this.parentConfig.pathspec + '/'}${this.name}`);
 
         return config;
     }
 }
 
-export type FeatureParams = Pick<Feature, 'fqn' | 'branchName'>;
+export type FeatureParams = Pick<Feature, 'name' | 'branchName' | 'sourceSha'>;
 export class Feature {
-    public fqn: string;
+    public name: string;
     public branchName: string;
+    public sourceSha: string;
 
     #initialized: boolean = false;
 
@@ -417,14 +525,20 @@ export class Feature {
     }
 
     public constructor(params: FeatureParams) {
-        this.fqn = params.fqn;
+        this.name = params.name;
         this.branchName = params.branchName;
+        this.sourceSha = params.sourceSha;
     }
 
     public async register(parentConfig: Config) {
         this.#initialized = true;
 
         this.#parentConfig = parentConfig;
+    }
+
+    public async init({ stdout, dryRun }: ExecParams = {}) {
+        if (!await this.parentConfig.branchExists(this.branchName, { stdout }))
+            await this.parentConfig.createBranch(this.branchName, { source: this.sourceSha, stdout, dryRun });
     }
 
     public async branchExists({ stdout }: ExecParams = {}) {
@@ -441,10 +555,11 @@ export class Feature {
     }
 }
 
-export type ReleaseParams = Pick<Feature, 'fqn' | 'branchName'>;
+export type ReleaseParams = Pick<Release, 'name' | 'branchName' | 'sourceSha'>;
 export class Release {
-    public fqn: string;
+    public name: string;
     public branchName: string;
+    public sourceSha?: string;
 
     #initialized: boolean = false;
 
@@ -466,14 +581,20 @@ export class Release {
     }
 
     public constructor(params: ReleaseParams) {
-        this.fqn = params.fqn;
+        this.name = params.name;
         this.branchName = params.branchName;
+        this.sourceSha = params.sourceSha;
     }
 
     public async register(parentConfig: Config) {
         this.#initialized = true;
 
         this.#parentConfig = parentConfig;
+    }
+
+    public async init({ stdout, dryRun }: ExecParams = {}) {
+        if (!await this.parentConfig.branchExists(this.branchName, { stdout }))
+            await this.parentConfig.createBranch(this.branchName, { source: this.sourceSha, stdout, dryRun });
     }
 
     public async branchExists({ stdout }: ExecParams = {}) {
@@ -496,4 +617,11 @@ export class Release {
 export type ExecParams = Omit<ExecOptions, 'cwd'> & { basePath?: string };
 export interface MergeParams {
     squash?: boolean;
+}
+export interface CreateBranchParams {
+    source?: string;
+}
+export interface TagParams {
+    source?: string;
+    annotation?: string;
 }

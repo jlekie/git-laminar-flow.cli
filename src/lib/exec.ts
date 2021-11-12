@@ -28,13 +28,13 @@ export async function exec(cmd: string, { cwd, stdout, dryRun }: ExecOptions = {
     });
 }
 export async function execCmd(cmd: string, { cwd, stdout, dryRun }: ExecOptions = {}) {
-    if (cwd)
-        stdout?.write(Chalk.gray(`Executing "${cmd}" [${cwd}]...\n`));
-    else
-        stdout?.write(Chalk.gray(`Executing "${cmd}"...\n`));
+    // if (cwd)
+    //     stdout?.write(Chalk.gray(`Executing "${cmd}" [${cwd}]...\n`));
+    // else
+    //     stdout?.write(Chalk.gray(`Executing "${cmd}"...\n`));
 
     if (dryRun)
-        return;
+        return '';
 
     return new Promise<string>((resolve, reject) => {
         ChildProcess.exec(cmd, { cwd }, (err, stdout, stderr) => {

@@ -12,8 +12,11 @@ export class CreateCommand extends BaseCommand {
     static paths = [['feature', 'create']];
 
     featureName = Option.String('--name', { required: true });
-    submodules = Option.Array('--submodules');
     branchName = Option.String('--branch-name', { required: false });
+    from = Option.String('--from', 'develop');
+
+    include = Option.Array('--include');
+    exclude = Option.Array('--exclude');
 
     checkout = Option.Boolean('--checkout', false);
 
@@ -23,39 +26,31 @@ export class CreateCommand extends BaseCommand {
 
     public async execute() {
         const config = await loadConfig(this.configPath);
-        const featureFqn = config.resolveFeatureFqn(this.featureName);
+        const targetConfigs = await config.resolveFilteredConfigs({
+            included: this.include,
+            excluded: this.exclude
+        });
 
+        const featureFqn = config.resolveFeatureFqn(this.featureName);
         const branchName = this.branchName ?? `feature/${this.featureName}`;
 
-        if (config.features.some(f => f.fqn === featureFqn))
-            throw new Error(`Feature ${this.featureName} already exists`);
+        for (const config of targetConfigs) {
+            if (config.features.some(f => f.name === featureFqn))
+                continue;
 
-        const features: Feature[] = [];
-        const addFeature = async (config: Config) => {
             const feature = new Feature({
-                fqn: featureFqn,
-                branchName
+                name: featureFqn,
+                branchName,
+                sourceSha: await config.resolveCommitSha(this.from)
             });
-
             config.features.push(feature);
-            features.push(feature);
+            await feature.register(config);
 
-            await feature.register(config);            
-        }
+            await feature.init({ stdout: this.context.stdout, dryRun: this.dryRun });
+            await config.save({ stdout: this.context.stdout, dryRun: this.dryRun });
 
-        await addFeature(config);
-
-        const submodules = config.submodules.filter(s => (this.submodules || ['**']).some(pattern => Minimatch(s.name, pattern)));
-        for (const submodule of submodules)
-            await addFeature(submodule.config);
-
-        await config.save({ stdout: this.context.stdout, dryRun: this.dryRun });
-        await Bluebird.map(submodules, s => s.config.save({ stdout: this.context.stdout, dryRun: this.dryRun }));
-
-        await config.initializeFeature(featureFqn, { stdout: this.context.stdout, dryRun: this.dryRun });
-
-        if (this.checkout) {
-            await Bluebird.map(features, feature => feature.checkoutBranch({ stdout: this.context.stdout, dryRun: this.dryRun }), { concurrency: 1 });
+            if (this.checkout)
+                config.checkoutBranch(feature.branchName, { stdout: this.context.stdout, dryRun: this.dryRun });
         }
     }
 }
@@ -96,7 +91,7 @@ export class CommitCommand extends BaseCommand {
 
         const features = config.findFeatures(featureFqn);
         for (const feature of features) {
-            const message = this.message ?? `feature ${feature.fqn} checkpoint`;
+            const message = this.message ?? `feature ${feature.name} checkpoint`;
             await feature.parentConfig.commit(message, { stdout: this.context.stdout, dryRun: this.dryRun });
         }
     }
@@ -163,7 +158,7 @@ export class MergeCommand extends BaseCommand {
                         this.context.stdout.write(Chalk.yellow(`Merge failed, aborting...\n`));
                         await feature.parentConfig.abortMerge({ stdout: this.context.stdout, dryRun: this.dryRun });
                     });
-                    await feature.parentConfig.commit(`feature ${feature.fqn} merge`, { stdout: this.context.stdout, dryRun: this.dryRun });
+                    await feature.parentConfig.commit(`feature ${feature.name} merge`, { stdout: this.context.stdout, dryRun: this.dryRun });
                 }
                 finally {
                     if (baseBranch)

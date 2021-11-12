@@ -17,6 +17,8 @@ cli.register(RepoCommands.CheckoutCommand);
 cli.register(RepoCommands.FetchCommand);
 cli.register(RepoCommands.ExecCommand);
 cli.register(RepoCommands.StatusCommand);
+cli.register(RepoCommands.SyncCommand);
+cli.register(RepoCommands.CloseCommand);
 
 cli.register(SubmoduleCommands.CloneCommand);
 
