@@ -52,6 +52,53 @@ export const ConfigSchema = Zod.object({
     supports: ConfigSupportSchema.array().optional()
 });
 
+export interface State {
+    [key: string]: StateValue;
+}
+export type StateValue = string | number | boolean | State;
+export const StateSchema: Zod.ZodSchema<State> = Zod.record(
+    Zod.string(),
+    Zod.union([ Zod.string(), Zod.number(), Zod.boolean(), Zod.lazy(() => StateSchema) ])
+);
+
+export function getStateValue(state: State, key: string, type: 'string'): string | undefined;
+export function getStateValue(state: State, key: string, type: 'number'): number | undefined;
+export function getStateValue(state: State, key: string, type: 'boolean'): boolean | undefined;
+export function getStateValue(state: State, key: string, type: 'nested'): State | undefined;
+export function getStateValue(state: State, key: string, type: 'string' | 'number' | 'boolean' | 'nested') {
+    const value = state[key];
+    if (value === undefined)
+        return;
+
+    if (type === 'string') {
+        if (!_.isString(value))
+            throw new Error(`State key ${key} not a string`);
+
+        return value;
+    }
+    else if (type === 'number') {
+        if (!_.isNumber(value))
+            throw new Error(`State key ${key} not a number`);
+
+        return value;
+    }
+    else if (type === 'boolean') {
+        if (!_.isBoolean(value))
+            throw new Error(`State key ${key} not a boolean`);
+
+        return value;
+    }
+    else if (type === 'nested') {
+        if (!_.isObject(value))
+            throw new Error(`State key ${key} not a nested state`);
+
+        return value;
+    }
+    else {
+        throw new Error(`Unsupported state type ${type}`);
+    }
+}
+
 // Either load the config from disk if it exists or create a new default config
 export async function loadConfig(path: string, parentConfig?: Config, pathspecPrefix?: string) {
     const config = await FS.pathExists(path)
@@ -60,37 +107,43 @@ export async function loadConfig(path: string, parentConfig?: Config, pathspecPr
             .then(hash => Config.parse(hash))
         : Config.createNew();
 
-    await config.register(Path.dirname(Path.resolve(path)), parentConfig, pathspecPrefix);
+    const repoPath = Path.dirname(Path.resolve(path));
+    await config.register(repoPath, parentConfig, pathspecPrefix);
 
     return config;
 }
 
 export type Artifact = {
     type: 'unknown';
-    branch?: string;
+    branch: string;
 } | {
     type: 'master';
-    branch?: string;
+    branch: string;
 } | {
     type: 'develop';
-    branch?: string;
+    branch: string;
 } | {
     type: 'feature';
-    branch?: string;
+    branch: string;
     feature: Feature;
 } | {
     type: 'release';
-    branch?: string;
+    branch: string;
     release: Release;
+} | {
+    type: 'hotfix';
+    branch: string;
+    hotfix: Hotfix;
 }
 
-export type ConfigParams = Pick<Config, 'identifier' | 'upstreams' | 'submodules' | 'features' | 'releases'>;
+export type ConfigParams = Pick<Config, 'identifier' | 'upstreams' | 'submodules' | 'features' | 'releases' | 'hotfixes'>;
 export class Config {
     public identifier: string;
     public upstreams: Array<{ name: string, url: string }>;
     public submodules: Submodule[];
     public features: Feature[];
     public releases: Release[];
+    public hotfixes: Hotfix[];
 
     #initialized: boolean = false;
 
@@ -118,6 +171,11 @@ export class Config {
         return this.#parentConfig;
     }
 
+    // #state: State = {};
+    // public get state() {
+    //     return this.#state;
+    // }
+
     public static parse(value: unknown) {
         return this.fromSchema(ConfigSchema.parse(value));
     }
@@ -127,7 +185,8 @@ export class Config {
             upstreams: value.upstreams?.map(i => ({ ...i })) ?? [],
             submodules: value.submodules?.map( i => Submodule.fromSchema(i)) ?? [],
             features: value.features?.map(i => Feature.fromSchema(i)) ?? [],
-            releases: value.releases?.map(i => Release.fromSchema(i)) ?? []
+            releases: value.releases?.map(i => Release.fromSchema(i)) ?? [],
+            hotfixes: value.hotfixes?.map(i => Hotfix.fromSchema(i)) ?? []
         });
 
         return config;
@@ -140,7 +199,8 @@ export class Config {
             upstreams: [],
             submodules: [],
             features: [],
-            releases: []
+            releases: [],
+            hotfixes: []
         });
     }
 
@@ -150,6 +210,7 @@ export class Config {
         this.submodules = params.submodules;
         this.features = params.features;
         this.releases = params.releases;
+        this.hotfixes = params.hotfixes;
     }
 
     // Register internals (initialize)
@@ -160,9 +221,17 @@ export class Config {
         this.#parentConfig = parentConfig;
         this.#pathspec = pathspec;
 
+        // const statePath = Path.join(path, '.gitflowstate');
+        // this.#state = await FS.pathExists(statePath)
+        //     ? await FS.readFile(statePath, 'utf8')
+        //         .then(content => JSON.parse(content))
+        //         .then(hash => StateSchema.parse(hash))
+        //     : {};
+
         await Bluebird.map(this.submodules, i => i.register(this));
         await Bluebird.map(this.features, i => i.register(this));
         await Bluebird.map(this.releases, i => i.register(this));
+        await Bluebird.map(this.hotfixes, i => i.register(this));
     }
 
     public flattenConfigs(): Config[] {
@@ -195,6 +264,9 @@ export class Config {
             else if (type === 'release') {
                 return artifact.type === 'release' && Minimatch(artifact.release.name, pattern);
             }
+            else if (type === 'hotfix') {
+                return artifact.type === 'hotfix' && Minimatch(artifact.hotfix.name, pattern);
+            }
             else {
                 return false;
             }
@@ -210,23 +282,81 @@ export class Config {
     public async resolveCurrentArtifact(): Promise<Artifact> {
         const currentBranch = await this.resolveCurrentBranch();
 
-        if (currentBranch === 'master') {
-            return { type: 'master', branch: currentBranch };
+        return this.resolveArtifactFromBranch(currentBranch);
+    }
+    public async resolveArtifactFromBranch(branchName: string): Promise<Artifact> {
+        if (branchName === 'master') {
+            return { type: 'master', branch: branchName };
         }
-        else if (currentBranch === 'develop') {
-            return { type: 'develop', branch: currentBranch };
+        else if (branchName === 'develop') {
+            return { type: 'develop', branch: branchName };
         }
         else {
-            const feature = this.features.find(f => f.branchName === currentBranch)
+            const feature = this.features.find(f => f.branchName === branchName)
             if (feature)
-                return { type: 'feature', branch: currentBranch, feature };
+                return { type: 'feature', branch: branchName, feature };
 
-            const release = this.releases.find(f => f.branchName === currentBranch)
+            const release = this.releases.find(f => f.branchName === branchName)
             if (release)
-                return { type: 'release', branch: currentBranch, release };
+                return { type: 'release', branch: branchName, release };
 
-            return { type: 'unknown', branch: currentBranch }
+            const hotfix = this.hotfixes.find(f => f.branchName === branchName)
+            if (hotfix)
+                return { type: 'hotfix', branch: branchName, hotfix };
+
+            return { type: 'unknown', branch: branchName }
         }
+    }
+
+    public getStateValue(key: string, type: 'string'): Promise<string | undefined>;
+    public getStateValue(key: string, type: 'number'): Promise<number | undefined>;
+    public getStateValue(key: string, type: 'boolean'): Promise<boolean | undefined>;
+    public getStateValue(key: string, type: 'nested'): Promise<State | undefined>;
+    public async getStateValue(key: string, type: 'string' | 'number' | 'boolean' | 'nested') {
+        const state = await this.loadState();
+
+        const value = state[key];
+        if (value === undefined)
+            return;
+
+        if (type === 'string') {
+            if (!_.isString(value))
+                throw new Error(`State key ${key} not a string`);
+
+            return value;
+        }
+        else if (type === 'number') {
+            if (!_.isNumber(value))
+                throw new Error(`State key ${key} not a number`);
+
+            return value;
+        }
+        else if (type === 'boolean') {
+            if (!_.isBoolean(value))
+                throw new Error(`State key ${key} not a boolean`);
+
+            return value;
+        }
+        else if (type === 'nested') {
+            if (!_.isObject(value))
+                throw new Error(`State key ${key} not a nested state`);
+
+            return value;
+        }
+        else {
+            throw new Error(`Unsupported state type ${type}`);
+        }
+    }
+
+    public async setStateValue(key: string, value?: StateValue) {
+        const state = await this.loadState();
+
+        if (value)
+            state[key] = value;
+        else
+            delete state[key];
+
+        await this.saveState(state);
     }
 
     public resolveFeatureFqn(featureName: string) {
@@ -336,16 +466,54 @@ export class Config {
         await this.save({ stdout, dryRun });
     }
 
+    public async deleteFeature(feature: Feature) {
+        const state = await this.loadState();
+        delete state[feature.stateKey];
+        await this.saveState(state);
+
+        const idx = this.features.indexOf(feature);
+        this.features.splice(idx, 1);
+    }
+    public async deleteRelease(release: Release) {
+        const state = await this.loadState();
+        delete state[release.stateKey];
+        await this.saveState(state);
+
+        const idx = this.releases.indexOf(release);
+        this.releases.splice(idx, 1);
+    }
+    public async deleteHotfix(hotfix: Hotfix) {
+        const state = await this.loadState();
+        delete state[hotfix.stateKey];
+        await this.saveState(state);
+
+        const idx = this.hotfixes.indexOf(hotfix);
+        this.hotfixes.splice(idx, 1);
+    }
+
     // Save the config to disk
     public async save({ stdout, dryRun }: ExecParams = {}) {
         const configPath = Path.join(this.path, '.gitflow.yml');
-
         if (!dryRun) {
             const content = Yaml.dump(this);
             await FS.writeFile(configPath, content, 'utf8');
         }
-
         stdout?.write(Chalk.gray(`Config written to ${configPath}\n`));
+    }
+
+    public async loadState() {
+        const statePath = Path.join(this.path, '.gitflowstate');
+        return await FS.pathExists(statePath)
+            ? await FS.readFile(statePath, 'utf8')
+                .then(content => JSON.parse(content))
+                .then(hash => StateSchema.parse(hash))
+            : {};
+    }
+    public async saveState(state: State) {
+        const statePath = Path.join(this.path, '.gitflowstate');
+
+        const content = JSON.stringify(state);
+        await FS.writeFile(statePath, content, 'utf8');
     }
 
     public async exec(cmd: string, { stdout, dryRun }: ExecParams = {}) {
@@ -355,8 +523,8 @@ export class Config {
     public async fetch({ stdout, dryRun }: ExecParams = {}) {
         await exec(`git fetch --all`, { cwd: this.path, stdout, dryRun });
     }
-    public async commit(message: string, { stdout, dryRun }: ExecParams = {}) {
-        await exec(`git commit -m "${message}"`, { cwd: this.path, stdout, dryRun });
+    public async commit(message: string, { amend, stdout, dryRun }: ExecParams & CommitParams = {}) {
+        await exec(`git commit -m "${message}"${amend ? ' --amend' : ''}`, { cwd: this.path, stdout, dryRun });
     }
     public async tag(tag: string, { source, annotation, stdout, dryRun }: ExecParams & TagParams = {}) {
         if (source || annotation) {
@@ -391,6 +559,8 @@ export class Config {
     }
 
     public async isDirty({ stdout, dryRun }: ExecParams = {}) {
+        await exec(`git update-index --refresh`, { cwd: this.path, stdout, dryRun }).catch(() => {});
+
         return await exec(`git diff-index --quiet HEAD`, { cwd: this.path, stdout, dryRun })
             .then(() => false)
             .catch(() => true);
@@ -398,17 +568,25 @@ export class Config {
     public async hasStagedChanges({ stdout, dryRun }: ExecParams = {}) {
         return !!await execCmd(`git diff --name-only --cached`, { cwd: this.path, stdout, dryRun });
     }
+    public async isMergeInProgress({ stdout, dryRun }: ExecParams = {}) {
+        return exec('git merge HEAD', { cwd: this.path, stdout, dryRun })
+            .then(() => false)
+            .catch(() => true);
+    }
 
-    public async merge(branchName: string, { squash, stdout, dryRun }: ExecParams & MergeParams = {}) {
+    public async merge(branchName: string, { squash, message, noCommit, strategy, stdout, dryRun }: ExecParams & MergeParams = {}) {
         if (squash) {
-            await exec(`git merge --squash ${branchName}`, { cwd: this.path, stdout, dryRun });
+            await exec(`git merge --squash ${branchName}${message ? ` -m "${message}"` : ''}${noCommit ? ' --no-commit' : ''}${strategy ? ` -X ${strategy}` : ''}`, { cwd: this.path, stdout, dryRun });
         }
         else {
-            await exec(`git merge ${branchName}`, { cwd: this.path, stdout, dryRun });
+            await exec(`git merge ${branchName}${message ? ` -m "${message}"` : ''}${noCommit ? ' --no-commit' : ''}${strategy ? ` -X ${strategy}` : ''}`, { cwd: this.path, stdout, dryRun });
         }
     }
     public async abortMerge({ stdout, dryRun }: ExecParams = {}) {
         await exec(`git merge --abort`, { cwd: this.path, stdout, dryRun });
+    }
+    public async resetMerge({ stdout, dryRun }: ExecParams = {}) {
+        await exec(`git reset --merge`, { cwd: this.path, stdout, dryRun });
     }
 
     public async resolveCurrentBranch({ stdout, dryRun }: ExecParams = {}) {
@@ -515,6 +693,10 @@ export class Feature {
         return this.#parentConfig;
     }
 
+    public get stateKey() {
+        return `feature/${this.name}`;
+    }
+
     public static parse(value: unknown) {
         return this.fromSchema(ConfigFeatureSchema.parse(value));
     }
@@ -571,6 +753,10 @@ export class Release {
         return this.#parentConfig;
     }
 
+    public get stateKey() {
+        return `release/${this.name}`;
+    }
+
     public static parse(value: unknown) {
         return this.fromSchema(ConfigReleaseSchema.parse(value));
     }
@@ -614,9 +800,75 @@ export class Release {
     }
 }
 
+export type HotfixParams = Pick<Release, 'name' | 'branchName' | 'sourceSha'>;
+export class Hotfix {
+    public name: string;
+    public branchName: string;
+    public sourceSha?: string;
+
+    #initialized: boolean = false;
+
+    #parentConfig!: Config;
+    public get parentConfig() {
+        if (!this.#initialized)
+            throw new Error('Not initialized');
+
+        return this.#parentConfig;
+    }
+
+    public get stateKey() {
+        return `hotfix/${this.name}`;
+    }
+
+    public static parse(value: unknown) {
+        return this.fromSchema(ConfigHotfixSchema.parse(value));
+    }
+    public static fromSchema(value: Zod.infer<typeof ConfigHotfixSchema>) {
+        return new this({
+            ...value
+        });
+    }
+
+    public constructor(params: HotfixParams) {
+        this.name = params.name;
+        this.branchName = params.branchName;
+        this.sourceSha = params.sourceSha;
+    }
+
+    public async register(parentConfig: Config) {
+        this.#initialized = true;
+
+        this.#parentConfig = parentConfig;
+    }
+
+    public async init({ stdout, dryRun }: ExecParams = {}) {
+        if (!await this.parentConfig.branchExists(this.branchName, { stdout }))
+            await this.parentConfig.createBranch(this.branchName, { source: this.sourceSha, stdout, dryRun });
+    }
+
+    public async branchExists({ stdout }: ExecParams = {}) {
+        const result = await execCmd(`git branch --list ${this.branchName}`, { cwd: this.parentConfig?.path, stdout });
+
+        return !!result;
+    }
+    public async createBranch({ stdout, dryRun }: ExecParams = {}) {
+        await exec(`git branch ${this.branchName}`, { cwd: this.parentConfig?.path, stdout, dryRun })
+    }
+
+    public async initialize({ stdout, dryRun }: ExecParams = {}) {
+        if (!await this.branchExists({ stdout, dryRun })) {
+            await this.createBranch({ stdout, dryRun });
+            stdout?.write(Chalk.blue(`Branch ${this.branchName} created [${this.parentConfig.path}]\n`));
+        }
+    }
+}
+
 export type ExecParams = Omit<ExecOptions, 'cwd'> & { basePath?: string };
 export interface MergeParams {
     squash?: boolean;
+    message?: string;
+    noCommit?: boolean;
+    strategy?: string;
 }
 export interface CreateBranchParams {
     source?: string;
@@ -624,4 +876,7 @@ export interface CreateBranchParams {
 export interface TagParams {
     source?: string;
     annotation?: string;
+}
+export interface CommitParams {
+    amend?: boolean;
 }
