@@ -12,7 +12,7 @@ import { URL } from 'url';
 
 import { BaseCommand } from './common';
 
-import { loadConfig, Config, Feature } from '../lib/config';
+import { loadConfig, Config, Feature, StateProxy } from '../lib/config';
 import { loadState } from '../lib/state';
 
 export class InitCommand extends BaseCommand {
@@ -270,11 +270,11 @@ export class CloseCommand extends BaseCommand {
                     const activeClosingFeature = await config.getStateValue('activeClosingFeature', 'string');
                     if (activeClosingFeature) {
                         this.logWarning(`[${Chalk.blue(repoRelativePath)}] Resuming close of ${activeClosingFeature}...`);
-
-                        return await config.resolveArtifactFromBranch(activeClosingFeature);
                     }
-                    else if (this.target) {
-                        const [ type, target ] = this.target.split('://');
+
+                    const featureUri = activeClosingFeature ?? this.target;
+                    if (featureUri) {
+                        const [ type, target ] = featureUri.split('://');
 
                         if (type === 'feature') {
                             const feature = config.features.find(f => f.name === target);
@@ -306,48 +306,32 @@ export class CloseCommand extends BaseCommand {
                     }
                 })();
 
-                // if (artifact.type !== 'develop') {
-                //     this.logWarning(`Cannot close feature unless on develop [${artifact.branch}]`);
-                //     continue;
-                // }
-
                 if (artifact?.type === 'feature') {
-                    // const feature = config.features.find(f => f.name === target);
-                    // if (!feature)
-                    //     continue;
-
                     await promptConfirm(`You are about to close feature ${Chalk.magenta(artifact.feature.name)} [${Chalk.gray(artifact.feature.branchName)}]. Continue?`, 'close-continue');
-                    await config.setStateValue('activeClosingFeature', artifact.branch);
+                    await config.setStateValue('activeClosingFeature', artifact.uri);
 
                     if (!this.abort) {
-                        if (await config.isDirty({ stdout: this.context.stdout }))
-                            throw new Error(`Cannot merge, please commit all outstanding changes`);
+                        if (!await config.getStateValue([ `${artifact.uri}/closing`, 'develop' ], 'boolean')) {
+                            if (await config.isDirty({ stdout: this.context.stdout }))
+                                throw new Error(`Cannot merge, please commit all outstanding changes`);
 
-                        await config.checkoutBranch('develop', { stdout: this.context.stdout, dryRun: this.dryRun });
-                        if (await config.isDirty({ stdout: this.context.stdout }))
-                            throw new Error(`Cannot merge, develop has uncommited or staged changes`);
+                            await config.checkoutBranch('develop', { stdout: this.context.stdout, dryRun: this.dryRun });
+                            if (await config.isDirty({ stdout: this.context.stdout }))
+                                throw new Error(`Cannot merge, develop has uncommited or staged changes`);
 
-                        await config.merge(artifact.feature.branchName, { squash: true, stdout: this.context.stdout, dryRun: this.dryRun }).catch(async err => {
-                            if (await FS.pathExists(Path.join(config.path, '.git/SQUASH_MSG')))
-                                await FS.writeFile(Path.join(config.path, '.git/SQUASH_MSG'), `feature ${artifact.feature.name} merge`);
+                            await config.merge(artifact.feature.branchName, { squash: true, stdout: this.context.stdout, dryRun: this.dryRun }).catch(async err => {
+                                if (await FS.pathExists(Path.join(config.path, '.git/SQUASH_MSG')))
+                                    await FS.writeFile(Path.join(config.path, '.git/SQUASH_MSG'), `feature ${artifact.feature.name} merge`);
 
-                            while (await config.isMergeInProgress({ stdout: this.context.stdout }))
-                                await promptConfirm(`Merge of branch ${Chalk.blue(artifact.branch)} into ${Chalk.blue('develop')} failed, resolve conflicts to proceed. Continue?`, 'merge-continue', true);
+                                while (await config.isMergeInProgress({ stdout: this.context.stdout }))
+                                    await promptConfirm(`Merge of branch ${Chalk.blue(artifact.branch)} into ${Chalk.blue('develop')} failed, resolve conflicts to proceed. Continue?`, 'merge-continue', true);
+                            });
 
-                            // artifact.feature.setStateFlag('close/merging/develop');
+                            if (await config.hasStagedChanges({ stdout: this.context.stdout, dryRun: this.dryRun }))
+                                await config.commit(`feature ${artifact.feature.name} merge`, { stdout: this.context.stdout, dryRun: this.dryRun });
 
-                            // this.logWarning(`Git merge failure: ${err.toString()}`);
-                            // await config.resetMerge({ stdout: this.context.stdout, dryRun: this.dryRun })
-                            // await config.checkoutBranch(artifact.branch, { stdout: this.context.stdout, dryRun: this.dryRun });
-
-                            // if (await FS.pathExists(Path.join(config.path, '.git/SQUASH_MSG')))
-                            //     await FS.writeFile(Path.join(config.path, '.git/SQUASH_MSG'), `feature ${artifact.feature.name} merge`);
-
-                            // throw err;
-                        });
-
-                        if (await config.hasStagedChanges({ stdout: this.context.stdout, dryRun: this.dryRun }))
-                            await config.commit(`feature ${artifact.feature.name} merge`, { stdout: this.context.stdout, dryRun: this.dryRun });
+                            await config.setStateValue([ `${artifact.uri}/closing`, 'develop' ], true);
+                        }
                     }
 
                     await config.checkoutBranch('develop', { stdout: this.context.stdout, dryRun: this.dryRun });
@@ -356,65 +340,57 @@ export class CloseCommand extends BaseCommand {
                     await config.deleteFeature(artifact.feature)
                     await config.save({ stdout: this.context.stdout, dryRun: this.dryRun });
 
+                    await config.setStateValues(`${artifact.uri}/closing`);
+
                     this.logInfo(`Feature ${artifact.feature.name} closed`);
                 }
                 else if (artifact?.type === 'release') {
-                    // const release = config.releases.find(f => f.name === target);
-                    // if (!release)
-                    //     continue;
-
                     await promptConfirm(`You are about to close release ${Chalk.magenta(artifact.release.name)} [${Chalk.gray(artifact.release.branchName)}]. Continue?`, 'close-continue');
-                    await config.setStateValue('activeClosingFeature', artifact.branch);
+                    await config.setStateValue('activeClosingFeature', artifact.uri);
 
                     if (!this.abort) {
-                        if (await config.isDirty({ stdout: this.context.stdout }))
-                            throw new Error(`Cannot merge, please commit all outstanding changes`);
+                        if (!await config.getStateValue([ `${artifact.uri}/closing`, 'develop' ], 'boolean')) {
+                            if (await config.isDirty({ stdout: this.context.stdout }))
+                                throw new Error(`Cannot merge, please commit all outstanding changes`);
 
-                        await config.checkoutBranch('develop', { stdout: this.context.stdout, dryRun: this.dryRun });
-                        if (await config.isDirty({ stdout: this.context.stdout }))
-                            throw new Error(`Cannot merge, develop has uncommited or staged changes`);
+                            await config.checkoutBranch('develop', { stdout: this.context.stdout, dryRun: this.dryRun });
+                            if (await config.isDirty({ stdout: this.context.stdout }))
+                                throw new Error(`Cannot merge, develop has uncommited or staged changes`);
 
-                        await config.merge(artifact.release.branchName, { squash: true, stdout: this.context.stdout, dryRun: this.dryRun }).catch(async err => {
-                            if (await FS.pathExists(Path.join(config.path, '.git/SQUASH_MSG')))
-                                await FS.writeFile(Path.join(config.path, '.git/SQUASH_MSG'), `release ${artifact.release.name} merge`);
+                            await config.merge(artifact.release.branchName, { squash: true, stdout: this.context.stdout, dryRun: this.dryRun }).catch(async err => {
+                                if (await FS.pathExists(Path.join(config.path, '.git/SQUASH_MSG')))
+                                    await FS.writeFile(Path.join(config.path, '.git/SQUASH_MSG'), `release ${artifact.release.name} merge`);
 
-                            while (await config.isMergeInProgress({ stdout: this.context.stdout }))
-                                await promptConfirm(`Merge of branch ${Chalk.blue(artifact.branch)} into ${Chalk.blue('develop')} failed, resolve conflicts to proceed. Continue?`, 'merge-continue', true);
+                                while (await config.isMergeInProgress({ stdout: this.context.stdout }))
+                                    await promptConfirm(`Merge of branch ${Chalk.blue(artifact.branch)} into ${Chalk.blue('develop')} failed, resolve conflicts to proceed. Continue?`, 'merge-continue', true);
+                            });
+        
+                            if (await config.hasStagedChanges({ stdout: this.context.stdout, dryRun: this.dryRun }))
+                                await config.commit(`release ${artifact.release.name} merge`, { stdout: this.context.stdout, dryRun: this.dryRun });
 
-                            // this.logWarning(`Git merge failure: ${err.toString()}`);
-                            // await config.resetMerge({ stdout: this.context.stdout, dryRun: this.dryRun })
-                            // await config.checkoutBranch(artifact.branch, { stdout: this.context.stdout, dryRun: this.dryRun });
+                            await config.setStateValue([ `${artifact.uri}/closing`, 'develop' ], true);
+                        }
 
-                            // throw err;
-                        });
+                        if (!await config.getStateValue([ `${artifact.uri}/closing`, 'master' ], 'boolean')) {
+                            await config.checkoutBranch('master', { stdout: this.context.stdout, dryRun: this.dryRun });
+                            if (await config.isDirty({ stdout: this.context.stdout }))
+                                throw new Error(`Cannot merge, master has uncommited or staged changes`);
     
-                        if (await config.hasStagedChanges({ stdout: this.context.stdout, dryRun: this.dryRun }))
-                            await config.commit(`release ${artifact.release.name} merge`, { stdout: this.context.stdout, dryRun: this.dryRun });
-                    }
-
-                    if (!this.abort) {
-                        await config.checkoutBranch('master', { stdout: this.context.stdout, dryRun: this.dryRun });
-                        if (await config.isDirty({ stdout: this.context.stdout }))
-                            throw new Error(`Cannot merge, master has uncommited or staged changes`);
-
-                        await config.merge(artifact.release.branchName, { squash: true, stdout: this.context.stdout, dryRun: this.dryRun }).catch(async err => {
-                            if (await FS.pathExists(Path.join(config.path, '.git/SQUASH_MSG')))
-                                await FS.writeFile(Path.join(config.path, '.git/SQUASH_MSG'), `release ${artifact.release.name} merge`);
-
-                            while (await config.isMergeInProgress({ stdout: this.context.stdout }))
-                                await promptConfirm(`Merge of branch ${Chalk.blue(artifact.branch)} into ${Chalk.blue('develop')} failed, resolve conflicts to proceed. Continue?`, 'merge-continue', true);
-
-                            // this.logWarning(`Git merge failure: ${err.toString()}`);
-                            // await config.resetMerge({ stdout: this.context.stdout, dryRun: this.dryRun })
-                            // await config.checkoutBranch(artifact.branch, { stdout: this.context.stdout, dryRun: this.dryRun });
-
-                            // throw err;
-                        });
+                            await config.merge(artifact.release.branchName, { squash: true, stdout: this.context.stdout, dryRun: this.dryRun }).catch(async err => {
+                                if (await FS.pathExists(Path.join(config.path, '.git/SQUASH_MSG')))
+                                    await FS.writeFile(Path.join(config.path, '.git/SQUASH_MSG'), `release ${artifact.release.name} merge`);
     
-                        if (await config.hasStagedChanges({ stdout: this.context.stdout, dryRun: this.dryRun }))
-                            await config.commit(`release ${artifact.release.name} merge`, { stdout: this.context.stdout, dryRun: this.dryRun });
+                                while (await config.isMergeInProgress({ stdout: this.context.stdout }))
+                                    await promptConfirm(`Merge of branch ${Chalk.blue(artifact.branch)} into ${Chalk.blue('develop')} failed, resolve conflicts to proceed. Continue?`, 'merge-continue', true);
+                            });
+        
+                            if (await config.hasStagedChanges({ stdout: this.context.stdout, dryRun: this.dryRun }))
+                                await config.commit(`release ${artifact.release.name} merge`, { stdout: this.context.stdout, dryRun: this.dryRun });
+    
+                            await config.tag(artifact.release.name, { annotation: `Release ${artifact.release.name}`, stdout: this.context.stdout, dryRun: this.dryRun })
 
-                        await config.tag(artifact.release.name, { annotation: `Release ${artifact.release.name}`, stdout: this.context.stdout, dryRun: this.dryRun })
+                            await config.setStateValue([ `${artifact.uri}/closing`, 'master' ], true);
+                        }
                     }
 
                     await config.deleteBranch(artifact.release.branchName, { stdout: this.context.stdout, dryRun: this.dryRun });
@@ -424,84 +400,57 @@ export class CloseCommand extends BaseCommand {
 
                     await config.checkoutBranch('develop', { stdout: this.context.stdout, dryRun: this.dryRun });
 
+                    await config.setStateValues(`${artifact.uri}/closing`);
+
                     this.logInfo(`Release ${artifact.release.name} closed`);
                 }
                 else if (artifact?.type === 'hotfix') {
                     await promptConfirm(`You are about to close hotfix ${Chalk.magenta(artifact.hotfix.name)} [${Chalk.gray(artifact.hotfix.branchName)}]. Continue?`, 'close-continue');
-                    await config.setStateValue('activeClosingFeature', artifact.branch);
+                    await config.setStateValue('activeClosingFeature', artifact.uri);
 
                     if (!this.abort) {
                         if (await config.isDirty({ stdout: this.context.stdout }))
                             throw new Error(`Cannot merge, please commit all outstanding changes`);
 
-                        await config.checkoutBranch('develop', { stdout: this.context.stdout, dryRun: this.dryRun });
-                        if (await config.isDirty({ stdout: this.context.stdout }))
-                            throw new Error(`Cannot merge, develop has uncommited or staged changes`);
+                        if (!await config.getStateValue([ `${artifact.uri}/closing`, 'master' ], 'boolean')) {
+                            await config.checkoutBranch('master', { stdout: this.context.stdout, dryRun: this.dryRun });
+                            if (await config.isDirty({ stdout: this.context.stdout }))
+                                throw new Error(`Cannot merge, master has uncommited or staged changes`);
 
-                        await config.merge(artifact.hotfix.branchName, { squash: true, stdout: this.context.stdout, dryRun: this.dryRun }).catch(async err => {
-                            // artifact.hotfix.setStateFlag('close/merging');
-                            // while (await config.isMergeInProgress({ stdout: this.context.stdout })) {
-                            //     await prompt('Git merge failure', { cwd: config.path, stdin: this.context.stdin, stdout: this.context.stdout });
-                            // }
+                            await config.merge(artifact.hotfix.branchName, { squash: true, stdout: this.context.stdout, dryRun: this.dryRun }).catch(async err => {
+                                if (await FS.pathExists(Path.join(config.path, '.git/SQUASH_MSG')))
+                                    await FS.writeFile(Path.join(config.path, '.git/SQUASH_MSG'), `hotfix ${artifact.hotfix.name} merge`);
 
-                            if (await FS.pathExists(Path.join(config.path, '.git/SQUASH_MSG')))
-                                await FS.writeFile(Path.join(config.path, '.git/SQUASH_MSG'), `hotfix ${artifact.hotfix.name} merge`);
+                                while (await config.isMergeInProgress({ stdout: this.context.stdout }))
+                                    await promptConfirm(`Merge of branch ${Chalk.blue(artifact.branch)} into ${Chalk.blue('develop')} failed, resolve conflicts to proceed. Continue?`, 'merge-continue', true);
+                            });
 
-                            while (await config.isMergeInProgress({ stdout: this.context.stdout }))
-                                await promptConfirm(`Merge of branch ${Chalk.blue(artifact.branch)} into ${Chalk.blue('develop')} failed, resolve conflicts to proceed. Continue?`, 'merge-continue', true);
+                            if (await config.hasStagedChanges({ stdout: this.context.stdout, dryRun: this.dryRun }))
+                                await config.commit(`hotfix ${artifact.hotfix.name} merge`, { stdout: this.context.stdout, dryRun: this.dryRun });
 
-                            // await prompt('Git merge failure. Please resolve conflicts to continue.', { cwd: config.path, stdin: this.context.stdin, stdout: this.context.stdout });
-                            // if (!await config.isMergeInProgress({ stdout: this.context.stdout })) {
-                            //     this.logWarning(`Git merge failure: ${err.toString()}`);
-                            //     await config.resetMerge({ stdout: this.context.stdout, dryRun: this.dryRun });
-                            //     await config.checkoutBranch(artifact.branch, { stdout: this.context.stdout, dryRun: this.dryRun });
+                            await config.tag(artifact.hotfix.name, { annotation: `Hotfix ${artifact.hotfix.name}`, stdout: this.context.stdout, dryRun: this.dryRun });
 
-                            //     throw err;
-                            // }
-                        });
+                            await config.setStateValue([ `${artifact.uri}/closing`, 'master' ], true);
+                        }
+
+                        if (!await config.getStateValue([ `${artifact.uri}/closing`, 'develop' ], 'boolean')) {
+                            await config.checkoutBranch('develop', { stdout: this.context.stdout, dryRun: this.dryRun });
+                            if (await config.isDirty({ stdout: this.context.stdout }))
+                                throw new Error(`Cannot merge, develop has uncommited or staged changes`);
     
-                        if (await config.hasStagedChanges({ stdout: this.context.stdout, dryRun: this.dryRun }))
-                            await config.commit(`hotfix ${artifact.hotfix.name} merge`, { stdout: this.context.stdout, dryRun: this.dryRun });
-                    }
-
-                    await config.checkoutBranch('master', { stdout: this.context.stdout, dryRun: this.dryRun });
-                    if (await config.isDirty({ stdout: this.context.stdout }))
-                        throw new Error(`Cannot merge, master has uncommited or staged changes`);
-
-                    if (!this.abort) {
-                        await config.merge(artifact.hotfix.branchName, { squash: true, stdout: this.context.stdout, dryRun: this.dryRun }).catch(async err => {
-                            // while (await config.isMergeInProgress({ stdout: this.context.stdout })) {
-                            //     await prompt('Git merge failure', { cwd: config.path, stdin: this.context.stdin, stdout: this.context.stdout });
-                            // }
-
-                            if (await FS.pathExists(Path.join(config.path, '.git/SQUASH_MSG')))
-                                await FS.writeFile(Path.join(config.path, '.git/SQUASH_MSG'), `hotfix ${artifact.hotfix.name} merge`);
-
-                            while (await config.isMergeInProgress({ stdout: this.context.stdout }))
-                                await promptConfirm(`Merge of branch ${Chalk.blue(artifact.branch)} into ${Chalk.blue('develop')} failed, resolve conflicts to proceed. Continue?`, 'merge-continue', true);
-
-                            // await prompt('Git merge failure. Please resolve conflicts to continue.', { cwd: config.path, stdin: this.context.stdin, stdout: this.context.stdout });
-                            // if (!await config.isMergeInProgress({ stdout: this.context.stdout })) {
-                            //     this.logWarning(`Git merge failure: ${err.toString()}`);
-                            //     await config.resetMerge({ stdout: this.context.stdout, dryRun: this.dryRun });
-                            //     await config.checkoutBranch(artifact.branch, { stdout: this.context.stdout, dryRun: this.dryRun });
-
-                            //     throw err;
-                            // }
-                        });
-
-                        // await config.merge(artifact.hotfix.branchName, { overwrite: true, squash: true, stdout: this.context.stdout, dryRun: this.dryRun }).catch(async err => {
-                        //     this.logWarning(`Git merge failure: ${err.toString()}`);
-                        //     await config.resetMerge({ stdout: this.context.stdout, dryRun: this.dryRun });
-                        //     await config.checkoutBranch(artifact.branch, { stdout: this.context.stdout, dryRun: this.dryRun });
-
-                        //     throw err;
-                        // });
+                            await config.merge(artifact.hotfix.branchName, { squash: true, stdout: this.context.stdout, dryRun: this.dryRun }).catch(async err => {
+                                if (await FS.pathExists(Path.join(config.path, '.git/SQUASH_MSG')))
+                                    await FS.writeFile(Path.join(config.path, '.git/SQUASH_MSG'), `hotfix ${artifact.hotfix.name} merge`);
     
-                        if (await config.hasStagedChanges({ stdout: this.context.stdout, dryRun: this.dryRun }))
-                            await config.commit(`hotfix ${artifact.hotfix.name} merge`, { stdout: this.context.stdout, dryRun: this.dryRun });
-
-                        await config.tag(artifact.hotfix.name, { annotation: `Hotfix ${artifact.hotfix.name}`, stdout: this.context.stdout, dryRun: this.dryRun })
+                                while (await config.isMergeInProgress({ stdout: this.context.stdout }))
+                                    await promptConfirm(`Merge of branch ${Chalk.blue(artifact.branch)} into ${Chalk.blue('develop')} failed, resolve conflicts to proceed. Continue?`, 'merge-continue', true);
+                            });
+        
+                            if (await config.hasStagedChanges({ stdout: this.context.stdout, dryRun: this.dryRun }))
+                                await config.commit(`hotfix ${artifact.hotfix.name} merge`, { stdout: this.context.stdout, dryRun: this.dryRun });
+    
+                            await config.setStateValue([ `${artifact.uri}/closing`, 'develop' ], true);
+                        }
                     }
 
                     await config.deleteBranch(artifact.hotfix.branchName, { stdout: this.context.stdout, dryRun: this.dryRun });
@@ -510,6 +459,8 @@ export class CloseCommand extends BaseCommand {
                     await config.save({ stdout: this.context.stdout, dryRun: this.dryRun });
 
                     await config.checkoutBranch('develop', { stdout: this.context.stdout, dryRun: this.dryRun });
+
+                    await config.setStateValues(`${artifact.uri}/closing`);
 
                     this.logInfo(`Hotfix ${artifact.hotfix.name} closed`);
                 }

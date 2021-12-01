@@ -56,46 +56,142 @@ export interface State {
     [key: string]: StateValue;
 }
 export type StateValue = string | number | boolean | State;
+export type StateProxyValue = string | number | boolean | StateProxy;
 export const StateSchema: Zod.ZodSchema<State> = Zod.record(
     Zod.string(),
     Zod.union([ Zod.string(), Zod.number(), Zod.boolean(), Zod.lazy(() => StateSchema) ])
 );
 
-export function getStateValue(state: State, key: string, type: 'string'): string | undefined;
-export function getStateValue(state: State, key: string, type: 'number'): number | undefined;
-export function getStateValue(state: State, key: string, type: 'boolean'): boolean | undefined;
-export function getStateValue(state: State, key: string, type: 'nested'): State | undefined;
-export function getStateValue(state: State, key: string, type: 'string' | 'number' | 'boolean' | 'nested') {
-    const value = state[key];
+export class StateProxy {
+    #config: Config;
+    #state: State;
+
+    public constructor(config: Config, state: State = {}) {
+        this.#config = config;
+        this.#state = state;
+    }
+
+    public getValue(key: string, type: 'string'): string | undefined;
+    public getValue(key: string, type: 'number'): number | undefined;
+    public getValue(key: string, type: 'boolean'): boolean | undefined;
+    public getValue(key: string, type: 'nested'): StateProxy | undefined;
+    public getValue(key: string, type: 'string' | 'number' | 'boolean' | 'nested'): StateProxyValue | undefined {
+        // return getStateValue(this.#state, key, type);
+
+        const value = this.#state[key];
+        if (value === undefined)
+            return;
+
+        if (type === 'string') {
+            if (!_.isString(value))
+                throw new Error(`State key ${key} not a string`);
+
+            return value;
+        }
+        else if (type === 'number') {
+            if (!_.isNumber(value))
+                throw new Error(`State key ${key} not a number`);
+
+            return value;
+        }
+        else if (type === 'boolean') {
+            if (!_.isBoolean(value))
+                throw new Error(`State key ${key} not a boolean`);
+
+            return value;
+        }
+        else if (type === 'nested') {
+            if (!_.isObject(value))
+                throw new Error(`State key ${key} not a nested state`);
+
+            return new StateProxy(this.#config, value);
+        }
+        else {
+            throw new Error(`Unsupported state type ${type}`);
+        }
+    }
+
+    // public async setValue(key: string, value?: StateValue | StateProxyValue) {
+    //     const state = await this.loadState();
+
+    //     if (value)
+    //         state[key] = value instanceof StateProxy ? value.toJSON() : value;
+    //     else
+    //         delete state[key];
+
+    //     await this.saveState(state);
+    // }
+
+    public toJSON() {
+        return this.#state;
+    }
+}
+
+export function getStateValue(state: State, key: string | string[], type: 'string'): string | undefined;
+export function getStateValue(state: State, key: string | string[], type: 'number'): number | undefined;
+export function getStateValue(state: State, key: string | string[], type: 'boolean'): boolean | undefined;
+export function getStateValue(state: State, key: string | string[], type: 'nested'): State | undefined;
+export function getStateValue(state: State, key: string | string[], type: 'string' | 'number' | 'boolean' | 'nested'): StateValue | undefined {
+    return getStateGenericValue(state, key, type);
+}
+
+export function getStateGenericValue(state: State, key: string | string[], type: 'string' | 'number' | 'boolean' | 'nested'): StateValue | undefined {
+    key = _.isArray(key) ? key : [ key ];
+
+    const value = state[key[0]];
     if (value === undefined)
         return;
 
-    if (type === 'string') {
+    if (key.length > 1) {
+        if (!_.isObject(value))
+            throw new Error(`State key ${key[0]} not a nested state`);
+
+        return getStateGenericValue(value, key.slice(1), type);
+    }
+    else if (type === 'string') {
         if (!_.isString(value))
-            throw new Error(`State key ${key} not a string`);
+            throw new Error(`State key ${key[0]} not a string`);
 
         return value;
     }
     else if (type === 'number') {
         if (!_.isNumber(value))
-            throw new Error(`State key ${key} not a number`);
+            throw new Error(`State key ${key[0]} not a number`);
 
         return value;
     }
     else if (type === 'boolean') {
         if (!_.isBoolean(value))
-            throw new Error(`State key ${key} not a boolean`);
+            throw new Error(`State key ${key[0]} not a boolean`);
 
         return value;
     }
     else if (type === 'nested') {
         if (!_.isObject(value))
-            throw new Error(`State key ${key} not a nested state`);
+            throw new Error(`State key ${key[0]} not a nested state`);
 
         return value;
     }
     else {
         throw new Error(`Unsupported state type ${type}`);
+    }
+}
+
+export function setStateValue(state: State, key: string | string[], value?: StateValue | StateProxyValue) {
+    key = _.isArray(key) ? key : [ key ];
+
+    if (key.length > 1) {
+        const nestedState = state[key[0]] = state[key[0]] ?? {};
+        if (!_.isObject(nestedState))
+            throw new Error(`State key ${key[0]} not a nested state`);
+
+        setStateValue(nestedState, key.slice(1), value);
+    }
+    else {
+        if (value)
+            state[key[0]] = value instanceof StateProxy ? value.toJSON() : value;
+        else
+            delete state[key[0]];
     }
 }
 
@@ -126,14 +222,17 @@ export type Artifact = {
     type: 'feature';
     branch: string;
     feature: Feature;
+    uri: string;
 } | {
     type: 'release';
     branch: string;
     release: Release;
+    uri: string;
 } | {
     type: 'hotfix';
     branch: string;
     hotfix: Hotfix;
+    uri: string;
 }
 
 export type ConfigParams = Pick<Config, 'identifier' | 'upstreams' | 'submodules' | 'features' | 'releases' | 'hotfixes'>;
@@ -294,67 +393,47 @@ export class Config {
         else {
             const feature = this.features.find(f => f.branchName === branchName)
             if (feature)
-                return { type: 'feature', branch: branchName, feature };
+                return { type: 'feature', branch: branchName, uri: feature.uri, feature };
 
             const release = this.releases.find(f => f.branchName === branchName)
             if (release)
-                return { type: 'release', branch: branchName, release };
+                return { type: 'release', branch: branchName, uri: release.uri, release };
 
             const hotfix = this.hotfixes.find(f => f.branchName === branchName)
             if (hotfix)
-                return { type: 'hotfix', branch: branchName, hotfix };
+                return { type: 'hotfix', branch: branchName, uri: hotfix.uri, hotfix };
 
             return { type: 'unknown', branch: branchName }
         }
     }
 
-    public getStateValue(key: string, type: 'string'): Promise<string | undefined>;
-    public getStateValue(key: string, type: 'number'): Promise<number | undefined>;
-    public getStateValue(key: string, type: 'boolean'): Promise<boolean | undefined>;
-    public getStateValue(key: string, type: 'nested'): Promise<State | undefined>;
-    public async getStateValue(key: string, type: 'string' | 'number' | 'boolean' | 'nested') {
+    public getStateValue(key: string | string[], type: 'string'): Promise<string | undefined>;
+    public getStateValue(key: string | string[], type: 'number'): Promise<number | undefined>;
+    public getStateValue(key: string | string[], type: 'boolean'): Promise<boolean | undefined>;
+    public getStateValue(key: string | string[], type: 'nested'): Promise<State | undefined>;
+    public async getStateValue(key: string | string[], type: 'string' | 'number' | 'boolean' | 'nested'): Promise<StateValue | undefined> {
         const state = await this.loadState();
 
-        const value = state[key];
-        if (value === undefined)
-            return;
-
-        if (type === 'string') {
-            if (!_.isString(value))
-                throw new Error(`State key ${key} not a string`);
-
-            return value;
-        }
-        else if (type === 'number') {
-            if (!_.isNumber(value))
-                throw new Error(`State key ${key} not a number`);
-
-            return value;
-        }
-        else if (type === 'boolean') {
-            if (!_.isBoolean(value))
-                throw new Error(`State key ${key} not a boolean`);
-
-            return value;
-        }
-        else if (type === 'nested') {
-            if (!_.isObject(value))
-                throw new Error(`State key ${key} not a nested state`);
-
-            return value;
-        }
-        else {
-            throw new Error(`Unsupported state type ${type}`);
-        }
+        return getStateGenericValue(state, key, type);
     }
 
-    public async setStateValue(key: string, value?: StateValue) {
+    public async setStateValue(key: string | string[], value?: StateValue | StateProxyValue) {
         const state = await this.loadState();
 
-        if (value)
-            state[key] = value;
-        else
-            delete state[key];
+        setStateValue(state, key, value);
+
+        await this.saveState(state);
+    }
+    public async setStateValues(glob: string, value?: StateValue | StateProxyValue) {
+        const state = await this.loadState();
+
+        const matchedKeys = _(state)
+            .keys()
+            .filter(key => Minimatch(key, glob))
+            .value();
+
+        for (const key of matchedKeys)
+            setStateValue(state, key, value);
 
         await this.saveState(state);
     }
@@ -693,6 +772,9 @@ export class Feature {
         return this.#parentConfig;
     }
 
+    public get uri() {
+        return `feature://${this.name}`;
+    }
     public get stateKey() {
         return `feature/${this.name}`;
     }
@@ -753,6 +835,9 @@ export class Release {
         return this.#parentConfig;
     }
 
+    public get uri() {
+        return `release://${this.name}`;
+    }
     public get stateKey() {
         return `release/${this.name}`;
     }
@@ -816,6 +901,9 @@ export class Hotfix {
         return this.#parentConfig;
     }
 
+    public get uri() {
+        return `hotfix://${this.name}`;
+    }
     public get stateKey() {
         return `hotfix/${this.name}`;
     }
