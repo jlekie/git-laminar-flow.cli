@@ -6,23 +6,22 @@ import * as Chalk from 'chalk';
 
 import { BaseCommand } from './common';
 
-import { loadConfig, Config, Release, Hotfix } from '../lib/config';
+import { loadConfig, Config, Release, Support } from '../lib/config';
 
 export class CreateCommand extends BaseCommand {
-    static paths = [['hotfix', 'create']];
+    static paths = [['support', 'create']];
 
     name = Option.String('--name', { required: true });
-    branchName = Option.String('--branch-name', { required: false });
     from = Option.String('--from', 'master');
 
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');
 
-    checkout = Option.Boolean('--checkout', false);
+    checkout = Option.String('--checkout');
 
     static usage = Command.Usage({
-        description: 'Create hotfix',
-        category: 'Hotfix'
+        description: 'Create support',
+        category: 'Support'
     });
 
     public async execute() {
@@ -33,25 +32,29 @@ export class CreateCommand extends BaseCommand {
         });
 
         const featureFqn = config.resolveFeatureFqn(this.name);
-        const branchName = this.branchName ?? `hotfix/${this.name}`;
+        const masterBranchName = `support/${this.name}/master`;
+        const developBranchName = `support/${this.name}/develop`;
 
         for (const config of targetConfigs) {
-            if (config.hotfixes.some(f => f.name === featureFqn))
+            if (config.supports.some(f => f.name === featureFqn))
                 continue;
 
-            const hotfix = new Hotfix({
+            const support = new Support({
                 name: featureFqn,
-                branchName,
+                masterBranchName,
+                developBranchName,
                 sourceSha: await config.resolveCommitSha(this.from)
             });
-            config.hotfixes.push(hotfix);
-            await hotfix.register(config);
+            config.supports.push(support);
+            await support.register(config);
 
-            await hotfix.init({ stdout: this.context.stdout, dryRun: this.dryRun });
+            await support.init({ stdout: this.context.stdout, dryRun: this.dryRun });
             await config.save({ stdout: this.context.stdout, dryRun: this.dryRun });
 
-            if (this.checkout)
-                config.checkoutBranch(hotfix.branchName, { stdout: this.context.stdout, dryRun: this.dryRun });
+            if (this.checkout === 'develop')
+                config.checkoutBranch(support.developBranchName, { stdout: this.context.stdout, dryRun: this.dryRun });
+            else if (this.checkout === 'master')
+                config.checkoutBranch(support.masterBranchName, { stdout: this.context.stdout, dryRun: this.dryRun });
         }
     }
 }

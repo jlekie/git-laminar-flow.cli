@@ -37,7 +37,8 @@ export const ConfigHotfixSchema = Zod.object({
 export const ConfigSupportSchema = Zod.object({
     name: Zod.string(),
     masterBranchName: Zod.string(),
-    developBranchName: Zod.string()
+    developBranchName: Zod.string(),
+    sourceSha: Zod.string()
 });
 export const ConfigSchema = Zod.object({
     identifier: Zod.string(),
@@ -49,7 +50,9 @@ export const ConfigSchema = Zod.object({
     features: ConfigFeatureSchema.array().optional(),
     releases: ConfigReleaseSchema.array().optional(),
     hotfixes: ConfigHotfixSchema.array().optional(),
-    supports: ConfigSupportSchema.array().optional()
+    supports: ConfigSupportSchema.array().optional(),
+    included: Zod.string().array().optional(),
+    excluded: Zod.string().array().optional()
 });
 
 export interface State {
@@ -235,7 +238,7 @@ export type Artifact = {
     uri: string;
 }
 
-export type ConfigParams = Pick<Config, 'identifier' | 'upstreams' | 'submodules' | 'features' | 'releases' | 'hotfixes'>;
+export type ConfigParams = Pick<Config, 'identifier' | 'upstreams' | 'submodules' | 'features' | 'releases' | 'hotfixes' | 'supports'> & Partial<Pick<Config, 'included' | 'excluded'>>;
 export class Config {
     public identifier: string;
     public upstreams: Array<{ name: string, url: string }>;
@@ -243,6 +246,9 @@ export class Config {
     public features: Feature[];
     public releases: Release[];
     public hotfixes: Hotfix[];
+    public supports: Support[];
+    public included?: string[];
+    public excluded?: string[];
 
     #initialized: boolean = false;
 
@@ -285,7 +291,10 @@ export class Config {
             submodules: value.submodules?.map( i => Submodule.fromSchema(i)) ?? [],
             features: value.features?.map(i => Feature.fromSchema(i)) ?? [],
             releases: value.releases?.map(i => Release.fromSchema(i)) ?? [],
-            hotfixes: value.hotfixes?.map(i => Hotfix.fromSchema(i)) ?? []
+            hotfixes: value.hotfixes?.map(i => Hotfix.fromSchema(i)) ?? [],
+            supports: value.supports?.map(i => Support.fromSchema(i)) ?? [],
+            included: value.included?.slice(),
+            excluded: value.excluded?.slice()
         });
 
         return config;
@@ -299,7 +308,8 @@ export class Config {
             submodules: [],
             features: [],
             releases: [],
-            hotfixes: []
+            hotfixes: [],
+            supports: []
         });
     }
 
@@ -310,6 +320,9 @@ export class Config {
         this.features = params.features;
         this.releases = params.releases;
         this.hotfixes = params.hotfixes;
+        this.supports = params.supports;
+        this.included = params.included;
+        this.excluded = params.excluded;
     }
 
     // Register internals (initialize)
@@ -341,11 +354,11 @@ export class Config {
     }
     public async resolveFilteredConfigs(params: { included?: string[], excluded?: string[] } = {}): Promise<Config[]> {
         const configs: Config[] = [];
-        await this.populateFilteredConfigs(configs, params);
+        await this.populateFilteredConfigs(configs, this, params);
 
         return configs;
     }
-    private async populateFilteredConfigs(configs: Config[], params: { included?: string[], excluded?: string[] }) {
+    private async populateFilteredConfigs(configs: Config[], rootConfig: Config, params: { included?: string[], excluded?: string[] }) {
         const artifact = await this.resolveCurrentArtifact();
 
         const match = (uri: string) => {
@@ -371,11 +384,13 @@ export class Config {
             }
         }
 
-        if ((!params.included || params.included.some(uri => match(uri))) && (!params.excluded || !params.excluded.some(uri => match(uri))))
+        const included = params.included ?? rootConfig.included;
+        const excluded = params.excluded ?? rootConfig.excluded;
+        if ((!included || included.some(uri => match(uri))) && (!excluded || !excluded.some(uri => match(uri))))
             configs.push(this);
 
         for (const submodule of this.submodules)
-            await submodule.config.populateFilteredConfigs(configs, params);
+            await submodule.config.populateFilteredConfigs(configs, rootConfig, params);
     }
 
     public async resolveCurrentArtifact(): Promise<Artifact> {
@@ -948,6 +963,60 @@ export class Hotfix {
             await this.createBranch({ stdout, dryRun });
             stdout?.write(Chalk.blue(`Branch ${this.branchName} created [${this.parentConfig.path}]\n`));
         }
+    }
+}
+
+export type SupportParams = Pick<Support, 'name' | 'masterBranchName' | 'developBranchName' | 'sourceSha'>;
+export class Support {
+    public name: string;
+    public masterBranchName: string;
+    public developBranchName: string;
+    public sourceSha?: string;
+
+    #initialized: boolean = false;
+
+    #parentConfig!: Config;
+    public get parentConfig() {
+        if (!this.#initialized)
+            throw new Error('Not initialized');
+
+        return this.#parentConfig;
+    }
+
+    public get uri() {
+        return `support://${this.name}`;
+    }
+    public get stateKey() {
+        return `support/${this.name}`;
+    }
+
+    public static parse(value: unknown) {
+        return this.fromSchema(ConfigSupportSchema.parse(value));
+    }
+    public static fromSchema(value: Zod.infer<typeof ConfigSupportSchema>) {
+        return new this({
+            ...value
+        });
+    }
+
+    public constructor(params: SupportParams) {
+        this.name = params.name;
+        this.masterBranchName = params.masterBranchName;
+        this.developBranchName = params.developBranchName;
+        this.sourceSha = params.sourceSha;
+    }
+
+    public async register(parentConfig: Config) {
+        this.#initialized = true;
+
+        this.#parentConfig = parentConfig;
+    }
+
+    public async init({ stdout, dryRun }: ExecParams = {}) {
+        if (!await this.parentConfig.branchExists(this.masterBranchName, { stdout }))
+            await this.parentConfig.createBranch(this.masterBranchName, { source: this.sourceSha, stdout, dryRun });
+        if (!await this.parentConfig.branchExists(this.developBranchName, { stdout }))
+            await this.parentConfig.createBranch(this.developBranchName, { source: this.sourceSha, stdout, dryRun });
     }
 }
 

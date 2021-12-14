@@ -21,7 +21,8 @@ export class CreateCommand extends BaseCommand {
     checkout = Option.Boolean('--checkout', false);
 
     static usage = Command.Usage({
-        description: 'Create feature'
+        description: 'Create feature',
+        category: 'Feature'
     });
 
     public async execute() {
@@ -61,7 +62,8 @@ export class CheckoutCommand extends BaseCommand {
     featureName = Option.String('--feature', { required: true });
 
     static usage = Command.Usage({
-        description: 'Checkout feature'
+        description: 'Checkout feature',
+        category: 'Feature'
     });
 
     public async execute() {
@@ -82,7 +84,8 @@ export class CommitCommand extends BaseCommand {
     message = Option.String('--message', { required: false })
 
     static usage = Command.Usage({
-        description: 'Commit feature'
+        description: 'Commit feature',
+        category: 'Feature'
     });
 
     public async execute() {
@@ -104,7 +107,8 @@ export class SyncCommand extends BaseCommand {
     branchName = Option.String('--branch', 'develop');
 
     static usage = Command.Usage({
-        description: 'Sync feature from branch'
+        description: 'Sync feature from branch',
+        category: 'Feature'
     });
 
     public async execute() {
@@ -137,7 +141,8 @@ export class MergeCommand extends BaseCommand {
     squash = Option.Boolean('--squash', false);
 
     static usage = Command.Usage({
-        description: 'Merge feature into develop'
+        description: 'Merge feature into develop',
+        category: 'Feature'
     });
 
     public async execute() {
@@ -178,7 +183,8 @@ export class CloseCommand extends BaseCommand {
     featureName = Option.String('--feature', { required: true });
 
     static usage = Command.Usage({
-        description: 'Close feature'
+        description: 'Close feature',
+        category: 'Feature'
     });
 
     public async execute() {

@@ -10,7 +10,8 @@ export class CloneCommand extends BaseCommand {
     reposBasePath = Option.String('--repo-base-path')
 
     static usage = Command.Usage({
-        description: 'Clone'
+        description: 'Clone',
+        category: 'Submodule'
     });
 
     public async execute() {

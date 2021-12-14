@@ -3,7 +3,7 @@ import 'source-map-support/register';
 
 import { Builtins, Cli } from 'clipanion';
 
-import { SubmoduleCommands, FeatureCommands, ReleaseCommands, RepoCommands, HotfixCommands } from './commands';
+import { SubmoduleCommands, FeatureCommands, ReleaseCommands, RepoCommands, HotfixCommands, SupportCommands } from './commands';
 
 const [ node, app, ...args ] = process.argv;
 const cli = new Cli({
@@ -25,6 +25,7 @@ cli.register(SubmoduleCommands.CloneCommand);
 cli.register(FeatureCommands.CreateCommand);
 cli.register(ReleaseCommands.CreateCommand);
 cli.register(HotfixCommands.CreateCommand);
+cli.register(SupportCommands.CreateCommand);
 
 cli.register(Builtins.HelpCommand);
 cli.register(Builtins.VersionCommand);

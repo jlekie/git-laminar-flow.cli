@@ -21,7 +21,8 @@ export class CreateCommand extends BaseCommand {
     checkout = Option.Boolean('--checkout', false);
 
     static usage = Command.Usage({
-        description: 'Create release'
+        description: 'Create release',
+        category: 'Release'
     });
 
     public async execute() {
@@ -61,7 +62,8 @@ export class CheckoutCommand extends BaseCommand {
     releaseName = Option.String('--release', { required: true });
 
     static usage = Command.Usage({
-        description: 'Checkout release'
+        description: 'Checkout release',
+        category: 'Release'
     });
 
     public async execute() {
@@ -82,7 +84,8 @@ export class SyncCommand extends BaseCommand {
     branchName = Option.String('--branch', 'develop');
 
     static usage = Command.Usage({
-        description: 'Sync release from branch'
+        description: 'Sync release from branch',
+        category: 'Release'
     });
 
     public async execute() {
@@ -114,7 +117,8 @@ export class MergeCommand extends BaseCommand {
     releaseName = Option.String('--release', { required: true });
 
     static usage = Command.Usage({
-        description: 'Merge feature into develop & master'
+        description: 'Merge feature into develop & master',
+        category: 'Release'
     });
 
     public async execute() {
@@ -146,7 +150,8 @@ export class CloseCommand extends BaseCommand {
     releaseName = Option.String('--release', { required: true });
 
     static usage = Command.Usage({
-        description: 'Delete release'
+        description: 'Delete release',
+        category: 'Release'
     });
 
     public async execute() {
