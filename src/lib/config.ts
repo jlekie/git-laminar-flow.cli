@@ -22,23 +22,29 @@ export const ConfigSubmoduleSchema = Zod.object({
 export const ConfigFeatureSchema = Zod.object({
     name: Zod.string(),
     branchName: Zod.string(),
-    sourceSha: Zod.string()
+    sourceSha: Zod.string(),
+    sources: Zod.string().array().optional()
 });
 export const ConfigReleaseSchema = Zod.object({
     name: Zod.string(),
     branchName: Zod.string(),
-    sourceSha: Zod.string().optional()
+    sourceSha: Zod.string().optional(),
+    sources: Zod.string().array().optional()
 });
 export const ConfigHotfixSchema = Zod.object({
     name: Zod.string(),
     branchName: Zod.string(),
-    sourceSha: Zod.string().optional()
+    sourceSha: Zod.string().optional(),
+    sources: Zod.string().array().optional()
 });
 export const ConfigSupportSchema = Zod.object({
     name: Zod.string(),
     masterBranchName: Zod.string(),
     developBranchName: Zod.string(),
-    sourceSha: Zod.string()
+    sourceSha: Zod.string(),
+    features: ConfigFeatureSchema.array().optional(),
+    releases: ConfigReleaseSchema.array().optional(),
+    hotfixes: ConfigHotfixSchema.array().optional()
 });
 export const ConfigSchema = Zod.object({
     identifier: Zod.string(),
@@ -236,7 +242,39 @@ export type Artifact = {
     branch: string;
     hotfix: Hotfix;
     uri: string;
-}
+};
+
+export type Element = {
+    type: 'branch';
+    branch: string;
+} | {
+    type: 'repo';
+    config: Config;
+} | {
+    type: 'feature';
+    feature: Feature;
+} | {
+    type: 'release';
+    release: Release;
+} | {
+    type: 'hotfix';
+    hotfix: Hotfix;
+} | {
+    type: 'support',
+    support: Support;
+};
+
+export const ElementSchema = Zod.tuple([
+    Zod.union([
+        Zod.literal('branch'),
+        Zod.literal('repo'),
+        Zod.literal('feature'),
+        Zod.literal('release'),
+        Zod.literal('hotfix'),
+        Zod.literal('support')
+    ]),
+    Zod.string()
+]);
 
 export type ConfigParams = Pick<Config, 'identifier' | 'upstreams' | 'submodules' | 'features' | 'releases' | 'hotfixes' | 'supports'> & Partial<Pick<Config, 'included' | 'excluded'>>;
 export class Config {
@@ -344,6 +382,7 @@ export class Config {
         await Bluebird.map(this.features, i => i.register(this));
         await Bluebird.map(this.releases, i => i.register(this));
         await Bluebird.map(this.hotfixes, i => i.register(this));
+        await Bluebird.map(this.supports, i => i.register(this));
     }
 
     public flattenConfigs(): Config[] {
@@ -420,6 +459,140 @@ export class Config {
 
             return { type: 'unknown', branch: branchName }
         }
+    }
+
+    public async parseElement(uri: string): Promise<Element> {
+        const [ type, value ] = ElementSchema.parse(uri.split('://', 2));
+
+        if (type === 'branch') {
+            if (!await this.branchExists(value))
+                throw new Error(`Branch ${value} does not exist`);
+
+            return { type: 'branch', branch: value };
+        }
+        else if (type === 'repo') {
+            const parts = value.split('/');
+
+            let config;
+            for (let a = 0; a < parts.length; a++) {
+                if (a === 0 && parts[a] === 'root') {
+                    config = this;
+                }
+                else {
+                    const submodule = this.submodules.find(s => s.name === parts[a])
+                    if (!submodule)
+                        throw new Error(`Submodule ${parts[a]} does not exist`);
+
+                    config = submodule.config;
+                }
+            }
+
+            if (!config)
+                throw new Error(`Config for repo ${value} does not exist`);
+
+            return { type: 'repo', config };
+        }
+        else if (type === 'feature') {
+            const parts = value.split('/');
+
+            if (parts.length === 2) {
+                const support = this.supports.find(s => s.name === parts[0]);
+                if (!support)
+                    throw new Error(`Support ${value} does not exist`);
+
+                const feature = support.features.find(f => f.name === parts[1]);
+                if (!feature)
+                    throw new Error(`Feature ${value} does not exist`);
+    
+                return { type: 'feature', feature };
+            }
+            else {
+                const feature = this.features.find(f => f.name === value);
+                if (!feature)
+                    throw new Error(`Feature ${value} does not exist`);
+    
+                return { type: 'feature', feature };
+            }
+        }
+        else if (type === 'release') {
+            const parts = value.split('/');
+
+            if (parts.length === 2) {
+                const support = this.supports.find(s => s.name === parts[0]);
+                if (!support)
+                    throw new Error(`Support ${value} does not exist`);
+
+                const release = support.releases.find(r => r.name === parts[1]);
+                if (!release)
+                    throw new Error(`Release ${value} does not exist`);
+    
+                return { type: 'release', release };
+            }
+            else {
+                const release = this.releases.find(r => r.name === value);
+                if (!release)
+                    throw new Error(`Release ${value} does not exist`);
+    
+                return { type: 'release', release };
+            }
+        }
+        else if (type === 'hotfix') {
+            const parts = value.split('/');
+
+            if (parts.length === 2) {
+                const support = this.supports.find(s => s.name === parts[0]);
+                if (!support)
+                    throw new Error(`Support ${value} does not exist`);
+
+                const hotfix = support.hotfixes.find(h => h.name === parts[1]);
+                if (!hotfix)
+                    throw new Error(`Hotfix ${value} does not exist`);
+    
+                return { type: 'hotfix', hotfix };
+            }
+            else {
+                const hotfix = this.hotfixes.find(h => h.name === value);
+                if (!hotfix)
+                    throw new Error(`Hotfix ${value} does not exist`);
+    
+                return { type: 'hotfix', hotfix };
+            }
+        }
+        else if (type === 'support') {
+            const support = this.supports.find(s => s.name === value);
+            if (!support)
+                throw new Error(`Support ${value} does not exist`);
+
+            return { type: 'support', support };
+        }
+        else {
+            throw new Error(`Could not parse element ${uri}`);
+        }
+    }
+
+    public async resolveCurrentElement(): Promise<Element> {
+        const currentBranch = await this.resolveCurrentBranch();
+
+        return this.resolveElementFromBranch(currentBranch);
+    }
+    public async resolveElementFromBranch(branchName: string): Promise<Element> {
+        const feature = this.features.find(f => f.branchName === branchName)
+        if (feature)
+            return { type: 'feature', feature };
+
+        const release = this.releases.find(f => f.branchName === branchName)
+        if (release)
+            return { type: 'release', release };
+
+        const hotfix = this.hotfixes.find(f => f.branchName === branchName)
+        if (hotfix)
+            return { type: 'hotfix', hotfix };
+
+        const support = this.supports.find(f => f.developBranchName === branchName || f.masterBranchName === branchName)
+        if (support)
+            return { type: 'support', support };
+
+        return { type: 'branch', branch: branchName }
     }
 
     public getStateValue(key: string | string[], type: 'string'): Promise<string | undefined>;
@@ -691,6 +864,13 @@ export class Config {
         return execCmd(`git rev-parse ${target}`, { cwd: this.path, stdout, dryRun });
     }
 
+    public async resolveActiveSupport() {
+        const activeSupportName = await this.getStateValue('activeSupport', 'string');
+        const activeSupport = activeSupportName ? this.supports.find(s => s.name === activeSupportName) : undefined;
+
+        return activeSupport;
+    }
+
     // public toJSON() {
     //     return {
     //         identifier: this.identifier,
@@ -771,11 +951,12 @@ export class Submodule {
     }
 }
 
-export type FeatureParams = Pick<Feature, 'name' | 'branchName' | 'sourceSha'>;
+export type FeatureParams = Pick<Feature, 'name' | 'branchName' | 'sourceSha'> & Partial<Pick<Feature, 'sources'>>;
 export class Feature {
     public name: string;
     public branchName: string;
     public sourceSha: string;
+    public sources: string[];
 
     #initialized: boolean = false;
 
@@ -787,11 +968,19 @@ export class Feature {
         return this.#parentConfig;
     }
 
+    #parentSupport!: Support | undefined;
+    public get parentSupport() {
+        if (!this.#initialized)
+            throw new Error('Not initialized');
+
+        return this.#parentSupport;
+    }
+
     public get uri() {
-        return `feature://${this.name}`;
+        return `feature://${this.parentSupport ? `${this.parentSupport.name}/` : ''}${this.name}`;
     }
     public get stateKey() {
-        return `feature/${this.name}`;
+        return `feature/${this.parentSupport ? `${this.parentSupport.name}/` : ''}${this.name}`;
     }
 
     public static parse(value: unknown) {
@@ -807,12 +996,14 @@ export class Feature {
         this.name = params.name;
         this.branchName = params.branchName;
         this.sourceSha = params.sourceSha;
+        this.sources = params.sources ?? [];
     }
 
-    public async register(parentConfig: Config) {
+    public async register(parentConfig: Config, parentSupport?: Support) {
         this.#initialized = true;
 
         this.#parentConfig = parentConfig;
+        this.#parentSupport = parentSupport;
     }
 
     public async init({ stdout, dryRun }: ExecParams = {}) {
@@ -832,13 +1023,32 @@ export class Feature {
     public async checkoutBranch({ stdout, dryRun }: ExecParams = {}) {
         await exec(`git checkout ${this.branchName}`, { cwd: this.parentConfig?.path, stdout, dryRun });
     }
+
+    public resolveSources() {
+        if (this.sources.length <= 0)
+            return [ this.parentConfig ];
+
+        return this.sources.map(source => {
+            if (source === '.') {
+                return this.parentConfig;
+            }
+            else {
+                const support = this.parentConfig.supports.find(s => s.name === source);
+                if (!support)
+                    throw new Error(`Support ${source} not found`);
+
+                return support;
+            }
+        });
+    }
 }
 
-export type ReleaseParams = Pick<Release, 'name' | 'branchName' | 'sourceSha'>;
+export type ReleaseParams = Pick<Release, 'name' | 'branchName' | 'sourceSha'> & Partial<Pick<Release, 'sources'>>;
 export class Release {
     public name: string;
     public branchName: string;
     public sourceSha?: string;
+    public sources: string[];
 
     #initialized: boolean = false;
 
@@ -850,11 +1060,19 @@ export class Release {
         return this.#parentConfig;
     }
 
+    #parentSupport!: Support | undefined;
+    public get parentSupport() {
+        if (!this.#initialized)
+            throw new Error('Not initialized');
+
+        return this.#parentSupport;
+    }
+
     public get uri() {
-        return `release://${this.name}`;
+        return `release://${this.parentSupport ? `${this.parentSupport.name}/` : ''}${this.name}`;
     }
     public get stateKey() {
-        return `release/${this.name}`;
+        return `release/${this.parentSupport ? `${this.parentSupport.name}/` : ''}${this.name}`;
     }
 
     public static parse(value: unknown) {
@@ -870,12 +1088,14 @@ export class Release {
         this.name = params.name;
         this.branchName = params.branchName;
         this.sourceSha = params.sourceSha;
+        this.sources = params.sources ?? [];
     }
 
-    public async register(parentConfig: Config) {
+    public async register(parentConfig: Config, parentSupport?: Support) {
         this.#initialized = true;
 
         this.#parentConfig = parentConfig;
+        this.#parentSupport = parentSupport;
     }
 
     public async init({ stdout, dryRun }: ExecParams = {}) {
@@ -900,11 +1120,12 @@ export class Release {
     }
 }
 
-export type HotfixParams = Pick<Release, 'name' | 'branchName' | 'sourceSha'>;
+export type HotfixParams = Pick<Hotfix, 'name' | 'branchName' | 'sourceSha'> & Partial<Pick<Hotfix, 'sources'>>;
 export class Hotfix {
     public name: string;
     public branchName: string;
     public sourceSha?: string;
+    public sources: string[];
 
     #initialized: boolean = false;
 
@@ -916,11 +1137,19 @@ export class Hotfix {
         return this.#parentConfig;
     }
 
+    #parentSupport!: Support | undefined;
+    public get parentSupport() {
+        if (!this.#initialized)
+            throw new Error('Not initialized');
+
+        return this.#parentSupport;
+    }
+
     public get uri() {
-        return `hotfix://${this.name}`;
+        return `hotfix://${this.parentSupport ? `${this.parentSupport.name}/` : ''}${this.name}`;
     }
     public get stateKey() {
-        return `hotfix/${this.name}`;
+        return `hotfix/${this.parentSupport ? `${this.parentSupport.name}/` : ''}${this.name}`;
     }
 
     public static parse(value: unknown) {
@@ -936,12 +1165,14 @@ export class Hotfix {
         this.name = params.name;
         this.branchName = params.branchName;
         this.sourceSha = params.sourceSha;
+        this.sources = params.sources ?? [];
     }
 
-    public async register(parentConfig: Config) {
+    public async register(parentConfig: Config, parentSupport?: Support) {
         this.#initialized = true;
 
         this.#parentConfig = parentConfig;
+        this.#parentSupport = parentSupport;
     }
 
     public async init({ stdout, dryRun }: ExecParams = {}) {
@@ -966,12 +1197,16 @@ export class Hotfix {
     }
 }
 
-export type SupportParams = Pick<Support, 'name' | 'masterBranchName' | 'developBranchName' | 'sourceSha'>;
+export type SupportParams = Pick<Support, 'name' | 'masterBranchName' | 'developBranchName' | 'sourceSha' | 'features' | 'releases' | 'hotfixes'>;
 export class Support {
     public name: string;
     public masterBranchName: string;
     public developBranchName: string;
     public sourceSha?: string;
+
+    public features: Feature[];
+    public releases: Release[];
+    public hotfixes: Hotfix[];
 
     #initialized: boolean = false;
 
@@ -995,7 +1230,10 @@ export class Support {
     }
     public static fromSchema(value: Zod.infer<typeof ConfigSupportSchema>) {
         return new this({
-            ...value
+            ...value,
+            features: value.features?.map(i => Feature.fromSchema(i)) ?? [],
+            releases: value.releases?.map(i => Release.fromSchema(i)) ?? [],
+            hotfixes: value.hotfixes?.map(i => Hotfix.fromSchema(i)) ?? []
         });
     }
 
@@ -1004,12 +1242,20 @@ export class Support {
         this.masterBranchName = params.masterBranchName;
         this.developBranchName = params.developBranchName;
         this.sourceSha = params.sourceSha;
+
+        this.features = params.features;
+        this.releases = params.releases;
+        this.hotfixes = params.hotfixes;
     }
 
     public async register(parentConfig: Config) {
         this.#initialized = true;
 
         this.#parentConfig = parentConfig;
+
+        await Bluebird.map(this.features, i => i.register(parentConfig, this));
+        await Bluebird.map(this.releases, i => i.register(parentConfig, this));
+        await Bluebird.map(this.hotfixes, i => i.register(parentConfig, this));
     }
 
     public async init({ stdout, dryRun }: ExecParams = {}) {
@@ -1017,6 +1263,31 @@ export class Support {
             await this.parentConfig.createBranch(this.masterBranchName, { source: this.sourceSha, stdout, dryRun });
         if (!await this.parentConfig.branchExists(this.developBranchName, { stdout }))
             await this.parentConfig.createBranch(this.developBranchName, { source: this.sourceSha, stdout, dryRun });
+    }
+
+    public async deleteFeature(feature: Feature) {
+        const state = await this.parentConfig.loadState();
+        delete state[feature.stateKey];
+        await this.parentConfig.saveState(state);
+
+        const idx = this.features.indexOf(feature);
+        this.features.splice(idx, 1);
+    }
+    public async deleteRelease(release: Release) {
+        const state = await this.parentConfig.loadState();
+        delete state[release.stateKey];
+        await this.parentConfig.saveState(state);
+
+        const idx = this.releases.indexOf(release);
+        this.releases.splice(idx, 1);
+    }
+    public async deleteHotfix(hotfix: Hotfix) {
+        const state = await this.parentConfig.loadState();
+        delete state[hotfix.stateKey];
+        await this.parentConfig.saveState(state);
+
+        const idx = this.hotfixes.indexOf(hotfix);
+        this.hotfixes.splice(idx, 1);
     }
 }
 

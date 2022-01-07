@@ -43,13 +43,55 @@ export class CreateCommand extends BaseCommand {
                 name: featureFqn,
                 masterBranchName,
                 developBranchName,
-                sourceSha: await config.resolveCommitSha(this.from)
+                sourceSha: await config.resolveCommitSha(this.from),
+                features: [],
+                releases: [],
+                hotfixes: []
             });
             config.supports.push(support);
             await support.register(config);
 
             await support.init({ stdout: this.context.stdout, dryRun: this.dryRun });
             await config.save({ stdout: this.context.stdout, dryRun: this.dryRun });
+
+            if (this.checkout === 'develop')
+                config.checkoutBranch(support.developBranchName, { stdout: this.context.stdout, dryRun: this.dryRun });
+            else if (this.checkout === 'master')
+                config.checkoutBranch(support.masterBranchName, { stdout: this.context.stdout, dryRun: this.dryRun });
+        }
+    }
+}
+
+export class ActivateCommand extends BaseCommand {
+    static paths = [['support', 'set-active']];
+
+    name = Option.String('--name', { required: true });
+
+    include = Option.Array('--include');
+    exclude = Option.Array('--exclude');
+
+    checkout = Option.String('--checkout');
+
+    static usage = Command.Usage({
+        description: 'Create support',
+        category: 'Support'
+    });
+
+    public async execute() {
+        const config = await loadConfig(this.configPath);
+        const targetConfigs = await config.resolveFilteredConfigs({
+            included: this.include,
+            excluded: this.exclude
+        });
+
+        const featureFqn = config.resolveFeatureFqn(this.name);
+
+        for (const config of targetConfigs) {
+            const support = config.supports.find(f => f.name === featureFqn)
+            if (!support)
+                continue;
+
+            await config.setStateValue('activeSupport', featureFqn);
 
             if (this.checkout === 'develop')
                 config.checkoutBranch(support.developBranchName, { stdout: this.context.stdout, dryRun: this.dryRun });

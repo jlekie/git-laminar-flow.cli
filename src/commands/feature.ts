@@ -6,14 +6,14 @@ import * as Chalk from 'chalk';
 
 import { BaseCommand } from './common';
 
-import { loadConfig, Config, Feature } from '../lib/config';
+import { loadConfig, Config, Feature, Support } from '../lib/config';
 
 export class CreateCommand extends BaseCommand {
     static paths = [['feature', 'create']];
 
     featureName = Option.String('--name', { required: true });
     branchName = Option.String('--branch-name', { required: false });
-    from = Option.String('--from', 'develop');
+    from = Option.String('--from', 'branch://develop');
 
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');
@@ -33,19 +33,39 @@ export class CreateCommand extends BaseCommand {
         });
 
         const featureFqn = config.resolveFeatureFqn(this.featureName);
-        const branchName = this.branchName ?? `feature/${this.featureName}`;
 
         for (const config of targetConfigs) {
-            if (config.features.some(f => f.name === featureFqn))
+            const fromElement = await config.parseElement(this.from);
+            const fromBranch = await (async () => {
+                if (fromElement.type === 'branch')
+                    return fromElement.branch;
+                else if (fromElement.type === 'repo')
+                    return fromElement.config.resolveCurrentBranch();
+                else if (fromElement.type === 'feature')
+                    return fromElement.feature.branchName;
+                else if (fromElement.type === 'release')
+                    return fromElement.release.branchName;
+                else if (fromElement.type === 'hotfix')
+                    return fromElement.hotfix.branchName;
+                else if (fromElement.type === 'support')
+                    return fromElement.support.developBranchName;
+                else
+                    throw new Error(`Cannot derive source branch from ${this.from}`);
+            })();
+
+            const branchName = this.branchName ?? `${fromElement.type === 'support' ? `support/${fromElement.support.name}/` : ''}feature/${this.featureName}`;
+            const source = fromElement.type === 'support' ? fromElement.support : config;
+
+            if (source.features.some(f => f.name === featureFqn))
                 continue;
 
             const feature = new Feature({
                 name: featureFqn,
                 branchName,
-                sourceSha: await config.resolveCommitSha(this.from)
+                sourceSha: await config.resolveCommitSha(fromBranch)
             });
-            config.features.push(feature);
-            await feature.register(config);
+            source.features.push(feature);
+            await feature.register(config, source instanceof Support ? source : undefined);
 
             await feature.init({ stdout: this.context.stdout, dryRun: this.dryRun });
             await config.save({ stdout: this.context.stdout, dryRun: this.dryRun });

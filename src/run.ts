@@ -27,6 +27,8 @@ cli.register(ReleaseCommands.CreateCommand);
 cli.register(HotfixCommands.CreateCommand);
 cli.register(SupportCommands.CreateCommand);
 
+cli.register(SupportCommands.ActivateCommand);
+
 cli.register(Builtins.HelpCommand);
 cli.register(Builtins.VersionCommand);
 
