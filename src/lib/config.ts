@@ -262,6 +262,7 @@ export type Element = {
 } | {
     type: 'support',
     support: Support;
+    targetBranch?: 'master' | 'develop';
 };
 
 export const ElementSchema = Zod.tuple([
@@ -559,11 +560,22 @@ export class Config {
             }
         }
         else if (type === 'support') {
-            const support = this.supports.find(s => s.name === value);
-            if (!support)
-                throw new Error(`Support ${value} does not exist`);
+            const parts = value.split('/');
 
-            return { type: 'support', support };
+            if (parts.length === 2) {
+                const support = this.supports.find(s => s.name === parts[0]);
+                if (!support)
+                    throw new Error(`Support ${value} does not exist`);
+    
+                return { type: 'support', support, targetBranch: Zod.union([ Zod.literal('master'), Zod.literal('develop') ]).parse(parts[1]) };
+            }
+            else {
+                const support = this.supports.find(s => s.name === value);
+                if (!support)
+                    throw new Error(`Support ${value} does not exist`);
+    
+                return { type: 'support', support };
+            }
         }
         else {
             throw new Error(`Could not parse element ${uri}`);

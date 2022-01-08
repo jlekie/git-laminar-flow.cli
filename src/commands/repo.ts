@@ -62,35 +62,28 @@ export class CheckoutCommand extends BaseCommand {
         const [ type, target ] = this.target.split('://');
 
         for (const config of targetConfigs) {
-            if (type === 'branch') {
-                await config.checkoutBranch(target, { stdout: this.context.stdout, dryRun: this.dryRun });
-            }
-            else if (type === 'feature') {
-                const feature = config.features.find(f => f.name === target);
-                if (feature)
-                    await config.checkoutBranch(feature.branchName, { stdout: this.context.stdout, dryRun: this.dryRun });
-            }
-            else if (type === 'release') {
-                const release = config.releases.find(r => r.name === target);
-                if (release)
-                    await config.checkoutBranch(release.branchName, { stdout: this.context.stdout, dryRun: this.dryRun });
-            }
-            else if (type === 'hotfix') {
-                const hotfix = config.hotfixes.find(r => r.name === target);
-                if (hotfix)
-                    await config.checkoutBranch(hotfix.branchName, { stdout: this.context.stdout, dryRun: this.dryRun });
-            }
-            else if (type == 'support') {
-                const [ supportName, branchType ] = target.split('/');
+            const fromElement = await config.parseElement(this.target);
+            const fromBranch = await (async () => {
+                if (fromElement.type === 'branch')
+                    return fromElement.branch;
+                else if (fromElement.type === 'feature')
+                    return fromElement.feature.branchName;
+                else if (fromElement.type === 'release')
+                    return fromElement.release.branchName;
+                else if (fromElement.type === 'hotfix')
+                    return fromElement.hotfix.branchName;
+                else if (fromElement.type === 'support')
+                    if (fromElement.targetBranch === 'develop')
+                        return fromElement.support.developBranchName;
+                    else if (fromElement.targetBranch === 'master')
+                        return fromElement.support.masterBranchName;
+                    else
+                        return fromElement.support.developBranchName;
+                else
+                    throw new Error(`Cannot derive source branch from ${this.target}`);
+            })();
 
-                const support = config.supports.find(s => s.name === supportName);
-                if (support) {
-                    if (branchType === 'develop')
-                        await config.checkoutBranch(support.developBranchName, { stdout: this.context.stdout, dryRun: this.dryRun });
-                    else if (branchType === 'master')
-                        await config.checkoutBranch(support.masterBranchName, { stdout: this.context.stdout, dryRun: this.dryRun });
-                }
-            }
+            await config.checkoutBranch(fromBranch, { stdout: this.context.stdout, dryRun: this.dryRun });
         }
     }
 }
