@@ -2,6 +2,8 @@ import * as Chalk from 'chalk';
 import * as ChildProcess from 'child_process';
 import * as Stream from 'stream';
 
+import * as Path from 'path';
+
 import * as Readline from 'readline';
 
 export interface ExecOptions {
@@ -30,7 +32,7 @@ export async function exec(cmd: string, { cwd, stdout, dryRun }: ExecOptions = {
         proc.stdout.on('data', d => stdout?.write(Chalk.gray(d)));
         proc.stderr.on('data', d => stdout?.write(Chalk.gray(d)));
 
-        proc.on('close', (code) => code !== 0 ? reject(new Error(`${cmd} <${cwd}> Exited with code ${code}`)) : resolve());
+        proc.on('close', (code) => code !== 0 ? reject(new Error(`${cmd} <${Path.resolve(cwd ?? '.')}> Exited with code ${code}`)) : resolve());
         proc.on('error', (err) => reject(err));
     });
 }
@@ -46,7 +48,7 @@ export async function execCmd(cmd: string, { cwd, stdout, dryRun }: ExecOptions 
     return new Promise<string>((resolve, reject) => {
         ChildProcess.exec(cmd, { cwd }, (err, stdout, stderr) => {
             if (err) {
-                reject(err);
+                reject(new Error(`Command "${cmd}" [${cwd}] failed [${err}]`));
                 return;
             }
 

@@ -12,7 +12,7 @@ import { URL } from 'url';
 
 import { BaseCommand } from './common';
 
-import { loadConfig, Config, Feature, StateProxy } from '../lib/config';
+import { loadRepoConfig, Config, Feature, StateProxy } from '../lib/config';
 import { loadState } from '../lib/state';
 
 export class InitCommand extends BaseCommand {
@@ -29,9 +29,9 @@ export class InitCommand extends BaseCommand {
     });
 
     public async execute() {
-        const config = await loadConfig(this.configPath);
+        const config = await loadRepoConfig({ stdout: this.context.stdout, dryRun: this.dryRun });
         const targetConfigs = await config.resolveFilteredConfigs({
-            included: this.include,
+            included: this.include ?? [ 'repo://**' ],
             excluded: this.exclude
         });
 
@@ -53,7 +53,7 @@ export class CheckoutCommand extends BaseCommand {
     });
 
     public async execute() {
-        const config = await loadConfig(this.configPath);
+        const config = await loadRepoConfig({ stdout: this.context.stdout, dryRun: this.dryRun });
         const targetConfigs = await config.resolveFilteredConfigs({
             included: this.include,
             excluded: this.exclude
@@ -98,7 +98,7 @@ export class FetchCommand extends BaseCommand {
     });
 
     public async execute() {
-        const config = await loadConfig(this.configPath);
+        const config = await loadRepoConfig({ stdout: this.context.stdout, dryRun: this.dryRun });
 
         const targetConfigs = [
             config,
@@ -121,7 +121,7 @@ export class ExecCommand extends BaseCommand {
     });
 
     public async execute() {
-        const config = await loadConfig(this.configPath);
+        const config = await loadRepoConfig({ stdout: this.context.stdout, dryRun: this.dryRun });
         const targetConfigs = await config.resolveFilteredConfigs({
             included: this.include,
             excluded: this.exclude
@@ -146,7 +146,7 @@ export class StatusCommand extends BaseCommand {
     });
 
     public async execute() {
-        const config = await loadConfig(this.configPath);
+        const config = await loadRepoConfig({ stdout: this.context.stdout, dryRun: this.dryRun });
         const targetConfigs = await config.resolveFilteredConfigs({
             included: this.include,
             excluded: this.exclude
@@ -183,7 +183,7 @@ export class SyncCommand extends BaseCommand {
     });
 
     public async execute() {
-        const config = await loadConfig(this.configPath);
+        const config = await loadRepoConfig({ stdout: this.context.stdout, dryRun: this.dryRun });
         const targetConfigs = await config.resolveFilteredConfigs({
             included: this.include,
             excluded: this.exclude
@@ -237,7 +237,7 @@ export class CloseCommand extends BaseCommand {
     });
 
     public async execute() {
-        const config = await loadConfig(this.configPath);
+        const config = await loadRepoConfig({ stdout: this.context.stdout, dryRun: this.dryRun });
         const targetConfigs = await config.resolveFilteredConfigs({
             included: this.include,
             excluded: this.exclude
@@ -278,8 +278,14 @@ export class CloseCommand extends BaseCommand {
                         this.logWarning(`[${Chalk.blue(repoRelativePath)}] Resuming close of ${activeClosingFeature}...`);
 
                     const featureUri = activeClosingFeature ?? this.target;
-                    return featureUri ? await config.parseElement(featureUri) : await config.resolveCurrentElement();
+                    return featureUri ? await config.parseElement(featureUri).catch(() => undefined) : await config.resolveCurrentElement();
                 })();
+
+                if (!element) {
+                    this.logVerbose(`[${Chalk.blue(repoRelativePath)}] Nothing to close, bypassing`);
+                    continue;
+                }
+
                 console.log(element)
 
                 // const artifact = await (async () => {
