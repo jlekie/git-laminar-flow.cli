@@ -7,6 +7,8 @@ import * as Yaml from 'js-yaml';
 import * as Glob from 'glob-promise';
 import * as Minimatch from 'minimatch';
 
+import Axios from 'axios';
+
 import * as Chalk from 'chalk';
 
 import { v4 as Uuid } from 'uuid';
@@ -15,54 +17,72 @@ import * as Zod from 'zod';
 
 import * as Crypto from 'crypto';
 
-import { exec, execCmd, ExecOptions } from './exec';
-import { has } from 'lodash';
+import { Transform, TransformOptions } from 'stream';
+import { StringDecoder } from 'string_decoder';
 
-export const ConfigSubmoduleSchema = Zod.object({
-    name: Zod.string(),
-    path: Zod.string()
-});
-export const ConfigFeatureSchema = Zod.object({
-    name: Zod.string(),
-    branchName: Zod.string(),
-    sourceSha: Zod.string(),
-    sources: Zod.string().array().optional()
-});
-export const ConfigReleaseSchema = Zod.object({
-    name: Zod.string(),
-    branchName: Zod.string(),
-    sourceSha: Zod.string().optional(),
-    sources: Zod.string().array().optional()
-});
-export const ConfigHotfixSchema = Zod.object({
-    name: Zod.string(),
-    branchName: Zod.string(),
-    sourceSha: Zod.string().optional(),
-    sources: Zod.string().array().optional()
-});
-export const ConfigSupportSchema = Zod.object({
-    name: Zod.string(),
-    masterBranchName: Zod.string(),
-    developBranchName: Zod.string(),
-    sourceSha: Zod.string(),
-    features: ConfigFeatureSchema.array().optional(),
-    releases: ConfigReleaseSchema.array().optional(),
-    hotfixes: ConfigHotfixSchema.array().optional()
-});
-export const ConfigSchema = Zod.object({
-    identifier: Zod.string(),
-    upstreams: Zod.object({
-        name: Zod.string(),
-        url: Zod.string()
-    }).array().optional(),
-    submodules: ConfigSubmoduleSchema.array().optional(),
-    features: ConfigFeatureSchema.array().optional(),
-    releases: ConfigReleaseSchema.array().optional(),
-    hotfixes: ConfigHotfixSchema.array().optional(),
-    supports: ConfigSupportSchema.array().optional(),
-    included: Zod.string().array().optional(),
-    excluded: Zod.string().array().optional()
-});
+import {
+    ConfigSchema, ConfigSubmoduleSchema, ConfigFeatureSchema, ConfigReleaseSchema, ConfigHotfixSchema, ConfigSupportSchema, ConfigUriSchema, ElementSchema,
+    ConfigBase, SubmoduleBase, FeatureBase, ReleaseBase, HotfixBase, SupportBase,
+    parseConfigReference
+} from '@jlekie/git-laminar-flow';
+
+import { exec, execCmd, ExecOptions } from './exec';
+import { Settings } from './settings';
+
+function applyMixins(derivedCtor: any, constructors: any[]) {
+    constructors.forEach((baseCtor) => {
+        Object.getOwnPropertyNames(baseCtor.prototype).forEach((name) => {
+            Object.defineProperty(
+                derivedCtor.prototype,
+                name,
+                Object.getOwnPropertyDescriptor(baseCtor.prototype, name) || Object.create(null)
+            );
+        });
+    });
+}
+
+class TestTransform extends Transform {
+    public static create(baseStream: NodeJS.WritableStream, label: string, options?: TransformOptions) {
+        const stream = new this(label, options);
+        stream.pipe(baseStream);
+
+        return stream;
+    }
+
+    public readonly label: string;
+
+    #decoder: StringDecoder = new StringDecoder('utf8');
+    #last?: string;
+
+    public constructor(label: string, options?: TransformOptions) {
+        super(options);
+
+        this.label = label;
+    }
+
+    public _transform(data: Buffer, encoding: string, callback: (err?: Error | null, data?: Buffer | string) => void) {
+        if (this.#last === undefined)
+            this.#last = '';
+
+        this.#last += this.#decoder.write(data);
+
+        let list = this.#last.split(/\n/);
+        this.#last = list.pop();
+
+        for (let i = 0; i < list.length; i++)
+            this.push(`${this.label} ${list[i]}\n`);
+
+        callback();
+    }
+    public _flush(callback: () => void) {
+        this.#last += this.#decoder.end();
+
+        if (this.#last)
+            this.push(this.#last);
+
+        callback();
+    }
+}
 
 export interface State {
     [key: string]: StateValue;
@@ -207,16 +227,77 @@ export function setStateValue(state: State, key: string | string[], value?: Stat
     }
 }
 
+export async function loadV2Config(uri: string, settings: Settings, { cwd, parentConfig, parentSubmodule, pathspecPrefix, stdout, dryRun }: LoadRepoConfigParams & ExecParams = {}) {
+    // stdout = stdout && TestTransform.create(stdout, Chalk.gray('[loadV2Config]'));
+
+    cwd = Path.resolve(cwd ?? '.');
+
+    stdout?.write(Chalk.blue(`Loading file from ${uri} [${cwd}]\n`));
+
+    const config = await (async () => {
+        const configRef = parseConfigReference(uri);
+
+        if (configRef.type === 'file') {
+            return await FS.pathExists(configRef.path)
+                ? await FS.readFile(configRef.path, 'utf8')
+                    .then(content => Yaml.load(content))
+                    .then(hash => Config.parse(hash))
+                : Config.createNew();
+        }
+        else if (configRef.type === 'branch') {
+            return await execCmd(`git show ${configRef.branchName}:.gitflow.yml`, { cwd, stdout, dryRun })
+                .then(content => Yaml.load(content))
+                .then(hash => Config.parse(hash))
+                .catch(() => Config.createNew());
+        }
+        else if (configRef.type === 'http') {
+            return await Axios.get(`${configRef.protocol}://${configRef.url}`)
+                .then(response => Config.parse(response.data))
+                .catch(err => {
+                    if (Axios.isAxiosError(err) && err.response?.status === 404)
+                        return Config.createNew();
+
+                    throw new Error(`Failed to fetch http(s) config [${err}]`);
+                });
+        }
+        else if (configRef.type === 'glfs') {
+            const hostUrl = (() => {
+                const matchedRepo = settings.glfsRepositories.find(r => r.name === configRef.hostname);
+                if (matchedRepo)
+                    return matchedRepo.url;
+                else
+                    return `http://${configRef.hostname}`;
+            })();
+
+            return await Axios.get(`${hostUrl}/v1/${configRef.namespace}/${configRef.name}`)
+                .then(response => Config.parse(response.data))
+                .catch(err => {
+                    if (Axios.isAxiosError(err) && err.response?.status === 404)
+                        return Config.createNew();
+
+                    throw new Error(`Failed to fetch http(s) config [${err}]`);
+                });
+        }
+        else {
+            throw new Error(`Unsupported config type ${configRef.type}`);
+        }
+    })();
+
+    await config.register(cwd, uri, config.calculateHash(), settings, parentConfig, parentSubmodule, pathspecPrefix);
+
+    return config;
+}
+
 // Either load the config from disk if it exists or create a new default config
-export async function loadConfig(path: string, parentConfig?: Config, pathspecPrefix?: string) {
+export async function loadConfig(path: string, settings: Settings, { cwd, parentConfig, parentSubmodule, pathspecPrefix }: { cwd?: string, parentConfig?: Config, parentSubmodule?: Submodule, pathspecPrefix?: string } = {}) {
     const config = await FS.pathExists(path)
         ? await FS.readFile(path, 'utf8')
             .then(content => Yaml.load(content))
             .then(hash => Config.parse(hash))
         : Config.createNew();
 
-    const repoPath = Path.dirname(Path.resolve(path));
-    await config.register(repoPath, parentConfig, pathspecPrefix);
+    const repoPath = cwd ?? Path.dirname(Path.resolve(path));
+    await config.register(repoPath, `file://${path}`, config.calculateHash(), settings, parentConfig, parentSubmodule, pathspecPrefix);
 
     return config;
 }
@@ -224,18 +305,25 @@ export async function loadConfig(path: string, parentConfig?: Config, pathspecPr
 export interface LoadRepoConfigParams {
     cwd?: string;
     parentConfig?: Config;
+    parentSubmodule?: Submodule;
     pathspecPrefix?: string;
 }
-export async function loadRepoConfig({ cwd, parentConfig, pathspecPrefix, stdout, dryRun }: LoadRepoConfigParams & ExecParams = {}) {
-    if (!!await execCmd(`git remote show origin`, { cwd, stdout, dryRun }).catch(err => false))
-        await exec('git pull origin gitflow', { cwd, stdout, dryRun });
+export async function loadRepoConfig(settings: Settings, { cwd, parentConfig, parentSubmodule, pathspecPrefix, stdout, dryRun }: LoadRepoConfigParams & ExecParams = {}) {
+    stdout = stdout && TestTransform.create(stdout, Chalk.gray('[loadRepoConfig]'));
+
+    // if (!!await execCmd(`git remote show origin`, { cwd, stdout, dryRun }).catch(err => false)) {
+    //     await exec('git fetch origin gitflow:gitflow', { cwd, stdout, dryRun });
+
+    //     // if (!!await execCmd(`git branch --list gitflow`, { cwd, stdout, dryRun }))
+    //     //     await exec('git pull origin gitflow', { cwd, stdout, dryRun });
+    // }
 
     const config = await execCmd('git show gitflow:.gitflow.yml', { cwd, stdout, dryRun })
         .then(content => Yaml.load(content))
         .then(hash => Config.parse(hash))
         .catch(() => Config.createNew());
 
-    await config.register(Path.resolve(cwd ?? '.'), parentConfig, pathspecPrefix);
+    await config.register(Path.resolve(cwd ?? '.'), 'branch://gitflow', config.calculateHash(), settings, parentConfig, parentSubmodule, pathspecPrefix);
 
     return config;
 }
@@ -287,19 +375,7 @@ export type Element = {
     targetBranch?: 'master' | 'develop';
 };
 
-export const ElementSchema = Zod.tuple([
-    Zod.union([
-        Zod.literal('branch'),
-        Zod.literal('repo'),
-        Zod.literal('feature'),
-        Zod.literal('release'),
-        Zod.literal('hotfix'),
-        Zod.literal('support')
-    ]),
-    Zod.string()
-]);
-
-export type ConfigParams = Pick<Config, 'identifier' | 'upstreams' | 'submodules' | 'features' | 'releases' | 'hotfixes' | 'supports'> & Partial<Pick<Config, 'included' | 'excluded'>>;
+export type ConfigParams = Pick<Config, 'identifier' | 'upstreams' | 'submodules' | 'features' | 'releases' | 'hotfixes' | 'supports' | 'included' | 'excluded'>;
 export class Config {
     public identifier: string;
     public upstreams: Array<{ name: string, url: string }>;
@@ -308,10 +384,18 @@ export class Config {
     public releases: Release[];
     public hotfixes: Hotfix[];
     public supports: Support[];
-    public included?: string[];
-    public excluded?: string[];
+    public included: string[];
+    public excluded: string[];
 
     #initialized: boolean = false;
+
+    #sourceUri!: string;
+    public get sourceUri() {
+        if (!this.#initialized)
+            throw new Error('Not initialized');
+
+        return this.#sourceUri;
+    }
 
     #path!: string;
     public get path() {
@@ -329,12 +413,36 @@ export class Config {
         return this.#pathspec;
     }
 
+    #baseHash!: string;
+    public get baseHash() {
+        if (!this.#initialized)
+            throw new Error('Not initialized');
+
+        return this.#baseHash;
+    }
+
+    #settings!: Settings;
+    public get settings() {
+        if (!this.#initialized)
+            throw new Error('Not initialized');
+
+        return this.#settings;
+    }
+
     #parentConfig?: Config;
     public get parentConfig() {
         if (!this.#initialized)
             throw new Error('Not initialized');
 
         return this.#parentConfig;
+    }
+
+    #parentSubmodule?: Submodule;
+    public get parentSubmodule() {
+        if (!this.#initialized)
+            throw new Error('Not initialized');
+
+        return this.#parentSubmodule;
     }
 
     // #state: State = {};
@@ -354,8 +462,8 @@ export class Config {
             releases: value.releases?.map(i => Release.fromSchema(i)) ?? [],
             hotfixes: value.hotfixes?.map(i => Hotfix.fromSchema(i)) ?? [],
             supports: value.supports?.map(i => Support.fromSchema(i)) ?? [],
-            included: value.included?.slice(),
-            excluded: value.excluded?.slice()
+            included: value.included?.slice() ?? [],
+            excluded: value.excluded?.slice() ?? []
         });
 
         return config;
@@ -370,7 +478,9 @@ export class Config {
             features: [],
             releases: [],
             hotfixes: [],
-            supports: []
+            supports: [],
+            included: [],
+            excluded: []
         });
     }
 
@@ -387,12 +497,16 @@ export class Config {
     }
 
     // Register internals (initialize)
-    public async register(path: string, parentConfig?: Config, pathspec: string = 'root') {
+    public async register(path: string, sourceUri: string, baseHash: string, settings: Settings, parentConfig?: Config, parentSubmodule?: Submodule, pathspec: string = 'root') {
         this.#initialized = true;
 
         this.#path = path;
+        this.#sourceUri = sourceUri;
         this.#parentConfig = parentConfig;
+        this.#parentSubmodule = parentSubmodule;
         this.#pathspec = pathspec;
+        this.#baseHash = baseHash;
+        this.#settings = settings;
 
         // const statePath = Path.join(path, '.gitflowstate');
         // this.#state = await FS.pathExists(statePath)
@@ -406,39 +520,6 @@ export class Config {
         await Bluebird.map(this.releases, i => i.register(this));
         await Bluebird.map(this.hotfixes, i => i.register(this));
         await Bluebird.map(this.supports, i => i.register(this));
-    }
-
-    public calculateHash({ algorithm = 'sha256', encoding = 'hex' }: { algorithm?: string, encoding?: Crypto.BinaryToTextEncoding } = {}) {
-        const hash = Crypto.createHash(algorithm);
-        this.updateHash(hash);
-
-        return hash.digest(encoding);
-    }
-    public updateHash(hash: Crypto.Hash) {
-        hash.update(this.identifier);
-
-        for (const upstream of this.upstreams) {
-            hash.update(upstream.name);
-            hash.update(upstream.url);
-        }
-
-        for (const include in this.included)
-            hash.update(include);
-        for (const exclude in this.excluded)
-            hash.update(exclude);
-
-        for (const submodule of this.submodules)
-            submodule.updateHash(hash);
-        for (const feature of this.features)
-            feature.updateHash(hash);
-        for (const release of this.releases)
-            release.updateHash(hash);
-        for (const hotfix of this.hotfixes)
-            hotfix.updateHash(hash);
-        for (const support of this.supports)
-            support.updateHash(hash);
-
-        return this;
     }
 
     public flattenConfigs(): Config[] {
@@ -482,7 +563,7 @@ export class Config {
 
         const included = params.included ?? rootConfig.included;
         const excluded = params.excluded ?? rootConfig.excluded;
-        if ((!included || await Bluebird.any(included.map(uri => match(uri)))) && (!excluded || !await Bluebird.any(excluded.map(uri => match(uri)))))
+        if (((!included || !included.length) || await Bluebird.any(included.map(uri => match(uri)))) && ((!excluded || !excluded.length) || !await Bluebird.any(excluded.map(uri => match(uri)))))
             configs.push(this);
 
         for (const submodule of this.submodules)
@@ -742,7 +823,21 @@ export class Config {
     public async init({ stdout, dryRun }: ExecParams = {}) {
         // Either perform fetch for existing repo or clone/initialize new repo
         if (await FS.pathExists(this.path)) {
-            await exec(`git fetch --all --prune`, { cwd: this.path, stdout, dryRun })
+            if (await FS.pathExists(Path.resolve(this.path, '.git'))) {
+                await exec(`git fetch --all --prune`, { cwd: this.path, stdout, dryRun });
+            }
+            else {
+                const originUpstream = this.upstreams.find(r => r.name == 'origin');
+                if (originUpstream) {
+                    await exec(`git init`, { cwd: this.path, stdout, dryRun });
+                    await exec(`git remote add ${originUpstream.name} ${originUpstream.url}`, { cwd: this.path, stdout, dryRun });
+                    await exec(`git fetch`, { cwd: this.path, stdout, dryRun });
+                }
+                else {
+                    await exec(`git init`, { cwd: this.path, stdout, dryRun });
+                    await exec(`git commit --allow-empty -m "initial commit"`, { cwd: this.path, stdout, dryRun });
+                }
+            }
         }
         else {
             const originUpstream = this.upstreams.find(r => r.name == 'origin');
@@ -756,33 +851,52 @@ export class Config {
             }
         }
 
+        // Create master branch if missing
+        if (!await this.branchExists('master', { stdout, dryRun })) {
+            if (await this.remoteBranchExists('master', 'origin', { stdout, dryRun })) {
+                await exec(`git checkout -b master --track origin/master`, { cwd: this.path, stdout, dryRun });
+            }
+            else {
+                await this.createBranch('master', { stdout, dryRun });
+            }
+        }
+
         // Create develop branch if missing
         if (!await this.branchExists('develop', { stdout, dryRun })) {
-            await this.createBranch('develop', { stdout, dryRun });
+            if (await this.remoteBranchExists('develop', 'origin', { stdout, dryRun })) {
+                await exec(`git checkout -b develop --track origin/develop`, { cwd: this.path, stdout, dryRun });
+            }
+            else {
+                await this.createBranch('develop', { stdout, dryRun });
+            }
         }
 
-        // Create gitflow branch if missing
-        if (!await this.branchExists('gitflow', { stdout, dryRun })) {
-            const currentBranch = await this.resolveCurrentBranch({ stdout, dryRun });
+        // // Create gitflow branch if missing
+        // if (!await this.branchExists('gitflow', { stdout, dryRun })) {
+        //     const currentBranch = await this.resolveCurrentBranch({ stdout, dryRun });
 
-            await this.checkoutBranch('gitflow', { orphan: true, stdout, dryRun });
-            await exec(`git reset HEAD -- .`, { cwd: this.path, stdout, dryRun });
+        //     await this.checkoutBranch('gitflow', { orphan: true, stdout, dryRun });
+        //     await exec(`git reset HEAD -- .`, { cwd: this.path, stdout, dryRun });
 
-            const gitignorePath = Path.resolve(this.path, '.gitignore');
-            !dryRun && await FS.writeFile(gitignorePath, '*\n!*/\n');
-            stdout?.write(Chalk.gray(`.gitignore written to ${gitignorePath}\n`));
-            await exec('git add -f .gitignore', { cwd: this.path, stdout, dryRun });
+        //     const gitignorePath = Path.resolve(this.path, '.gitignore');
+        //     !dryRun && await FS.writeFile(gitignorePath, '*\n!*/\n');
+        //     stdout?.write(Chalk.gray(`.gitignore written to ${gitignorePath}\n`));
+        //     await exec('git add -f .gitignore', { cwd: this.path, stdout, dryRun });
 
-            await exec(`git commit --allow-empty -m "initial commit"`, { cwd: this.path, stdout, dryRun });
+        //     await exec(`git commit --allow-empty -m "initial commit"`, { cwd: this.path, stdout, dryRun });
 
-            await this.checkoutBranch(currentBranch, { stdout, dryRun });
-        }
+        //     await this.checkoutBranch(currentBranch, { stdout, dryRun });
+        // }
 
         // Add upstreams if missing
         for (const upstream of this.upstreams) {
             if (!await this.upstreamExists(upstream.name, { stdout, dryRun }))
                 await exec(`git remote add ${upstream.name} ${upstream.url}`, { cwd: this.path, stdout, dryRun });
         }
+
+        // // Add origin upstream if missing
+        // if (this.parentSubmodule?.url && !await this.upstreamExists('origin', { stdout, dryRun }))
+        //     this.createUpstream('origin', this.parentSubmodule.url, { stdout, dryRun });
 
         // Update .gitmodules config with submodules
         if (!dryRun && this.submodules.length > 0) {
@@ -792,9 +906,11 @@ export class Config {
             for (const repo of this.submodules) {
                 const resolvedPath = Path.posix.join(repo.path);
 
+                const originUpstream = repo.config.upstreams.find(u => u.name === 'origin');
+
                 gitmodulesStream.write(`[submodule "${repo.name}"]\n`);
                 gitmodulesStream.write(`    path = ${resolvedPath}\n`);
-                gitmodulesStream.write(`    url = ""\n`);
+                gitmodulesStream.write(`    url = "${originUpstream?.url ?? ''}"\n`);
             }
             gitmodulesStream.close();
 
@@ -802,9 +918,8 @@ export class Config {
         }
 
         // // Initialize submodules
-        // for (const submodule of this.submodules) {
+        // for (const submodule of this.submodules)
         //     await submodule.init({ stdout, dryRun });
-        // }
 
         // Initialize features
         for (const feature of this.features)
@@ -823,7 +938,7 @@ export class Config {
             await support.init({ stdout, dryRun });
 
         // Save updated config to disk
-        await this.saveRepo({ stdout, dryRun });
+        await this.saveV2({ stdout, dryRun });
     }
 
     public async deleteFeature(feature: Feature) {
@@ -853,7 +968,7 @@ export class Config {
 
     // Save the config to disk
     public async save({ stdout, dryRun }: ExecParams = {}) {
-        await this.saveRepo({ stdout, dryRun });
+        await this.saveV2({ stdout, dryRun });
         // const configPath = Path.join(this.path, '.gitflow.yml');
         // if (!dryRun) {
         //     const content = Yaml.dump(this);
@@ -862,7 +977,9 @@ export class Config {
         // stdout?.write(Chalk.gray(`Config written to ${configPath}\n`));
     }
     public async saveRepo({ stdout, dryRun }: ExecParams = {}) {
-        const existingConfig = await loadRepoConfig({ cwd: this.path, stdout, dryRun });
+        stdout = stdout && TestTransform.create(stdout, Chalk.gray('[saveRepo]'));
+
+        const existingConfig = await loadRepoConfig(this.settings, { cwd: this.path, stdout, dryRun });
 
         const currentHash = this.calculateHash();
         if (currentHash !== existingConfig.calculateHash()) {
@@ -878,6 +995,74 @@ export class Config {
             await exec(`git commit -m "gitflow config update <${currentHash}>" .gitflow.yml`, { cwd: this.path, stdout, dryRun });
 
             await this.checkoutBranch(currentBranch, { stdout, dryRun });
+
+            // if (await this.upstreamExists('origin', { stdout, dryRun }))
+            //     await this.push('origin', 'gitflow', { stdout, dryRun });
+        }
+    }
+    public async saveV2({ stdout, dryRun }: ExecParams = {}) {
+        // stdout = stdout && TestTransform.create(stdout, Chalk.gray('[saveV2]'));
+
+        stdout?.write(Chalk.gray(`Saving config to ${this.sourceUri}\n`));
+
+        const configRef = parseConfigReference(this.sourceUri);
+        if (configRef.type === 'file') {
+            if (!dryRun) {
+                const content = Yaml.dump(this);
+                await FS.writeFile(configRef.path, content, 'utf8');
+            }
+            stdout?.write(Chalk.gray(`Config written to ${configRef.path}\n`));
+        }
+        else if (configRef.type === 'branch') {
+            const existingConfig = await loadV2Config(this.sourceUri, this.settings, { cwd: this.path, stdout, dryRun });
+
+            const currentHash = this.calculateHash();
+            if (currentHash !== existingConfig.calculateHash()) {
+                const currentBranch = await this.resolveCurrentBranch({ stdout, dryRun });
+                await this.checkoutBranch(configRef.branchName, { stdout, dryRun });
+
+                const configPath = Path.join(this.path, '.gitflow.yml');
+                if (!dryRun)
+                    await FS.writeFile(configPath, Yaml.dump(this), 'utf8');
+                stdout?.write(Chalk.gray(`Config written to ${configPath}\n`));
+
+                await exec('git add -f .gitflow.yml', { cwd: this.path, stdout, dryRun });
+                await exec(`git commit -m "gitflow config update <${currentHash}>" .gitflow.yml`, { cwd: this.path, stdout, dryRun });
+
+                await this.checkoutBranch(currentBranch, { stdout, dryRun });
+
+                // if (await this.upstreamExists('origin', { stdout, dryRun }))
+                //     await this.push('origin', 'gitflow', { stdout, dryRun });
+            }
+        }
+        else if (configRef.type === 'http') {
+            if (!dryRun) {
+                await Axios.put(`${configRef.protocol}://${configRef.url}`, this.toHash(), {
+                    headers: {
+                        'if-match': this.baseHash
+                    }
+                });
+            }
+        }
+        else if (configRef.type === 'glfs') {
+            const hostUrl = (() => {
+                const matchedRepo = this.settings.glfsRepositories.find(r => r.name === configRef.hostname);
+                if (matchedRepo)
+                    return matchedRepo.url;
+                else
+                    return `http://${configRef.hostname}`;
+            })();
+
+            if (!dryRun) {
+                await Axios.put(`${hostUrl}/v1/${configRef.namespace}/${configRef.name}`, this.toHash(), {
+                    headers: {
+                        'if-match': this.baseHash
+                    }
+                });
+            }
+        }
+        else {
+            throw new Error(`Unsupported config type ${configRef.type}`);
         }
     }
 
@@ -906,6 +1091,9 @@ export class Config {
     public async commit(message: string, { amend, stdout, dryRun }: ExecParams & CommitParams = {}) {
         await exec(`git commit -m "${message}"${amend ? ' --amend' : ''}`, { cwd: this.path, stdout, dryRun });
     }
+    public async push(upstreamName: string, branchName: string, { setUpstream, stdout, dryRun }: ExecParams & PushParams = {}) {
+        await exec(`git push${setUpstream ? ' -u' : ''} ${upstreamName} ${branchName}`, { cwd: this.path, stdout, dryRun });
+    }
     public async tag(tag: string, { source, annotation, stdout, dryRun }: ExecParams & TagParams = {}) {
         if (source || annotation) {
             await exec(`git tag -a ${tag}${annotation ? ` -m "${annotation}"` : ''}${source ? ` ${source}` : ''}`, { cwd: this.#path, stdout, dryRun });
@@ -918,8 +1106,13 @@ export class Config {
     public async upstreamExists(upstreamName: string, { stdout, dryRun }: ExecParams = {}) {
         return !!await execCmd(`git remote show ${upstreamName}`, { cwd: this.path, stdout, dryRun }).catch(err => false);
     }
+    public async createUpstream(upstreamName: string, upstreamUrl: string, { stdout, dryRun }: ExecParams = {}) {
+        await exec(`git remote add ${upstreamName} ${upstreamUrl}`, { cwd: this.path, stdout, dryRun });
+    }
 
     public async checkoutBranch(branchName: string, { orphan, stdout, dryRun }: ExecParams & CheckoutBranchParams = {}) {
+        // stdout = stdout && TestTransform.create(stdout, Chalk.gray('[checkoutBranch]'));
+
         await exec(`git checkout ${orphan ? '--orphan ' : ''}${branchName}`, { cwd: this.path, stdout, dryRun });
     }
     public async createBranch(branchName: string, { source, stdout, dryRun }: ExecParams & CreateBranchParams = {}) {
@@ -935,7 +1128,7 @@ export class Config {
         return !!await execCmd(`git branch --list ${branchName}`, { cwd: this.path, stdout, dryRun });
     }
     public async remoteBranchExists(branchName: string, upstreamName: string, { stdout, dryRun }: ExecParams = {}) {
-        return !!await execCmd(`git ls-remote --heads ${upstreamName} ${branchName}`, { cwd: this.path, stdout, dryRun });
+        return await this.upstreamExists(upstreamName, { stdout, dryRun }) && !!await execCmd(`git ls-remote --heads ${upstreamName} ${branchName}`, { cwd: this.path, stdout, dryRun });
     }
 
     public async isDirty({ stdout, dryRun }: ExecParams = {}) {
@@ -984,6 +1177,14 @@ export class Config {
         return activeSupport;
     }
 
+    public migrateSource({ sourceUri, baseHash }: { sourceUri?: string, baseHash?: string } = {}) {
+        if (sourceUri)
+            this.#sourceUri = sourceUri;
+
+        if (baseHash)
+            this.#baseHash = baseHash;
+    }
+
     // public toJSON() {
     //     return {
     //         identifier: this.identifier,
@@ -992,10 +1193,14 @@ export class Config {
     // }
 }
 
-export type SubmoduleParams = Pick<Submodule, 'name' | 'path'>;
+export interface Config extends ConfigBase {}
+applyMixins(Config, [ ConfigBase ]);
+
+export type SubmoduleParams = Pick<Submodule, 'name' | 'path' | 'url'>;
 export class Submodule {
     public name: string;
     public path: string;
+    public url?: string;
 
     #initialized: boolean = false;
 
@@ -1027,6 +1232,7 @@ export class Submodule {
     public constructor(params: SubmoduleParams) {
         this.name = params.name;
         this.path = params.path;
+        this.url = params.url;
     }
 
     public async register(parentConfig: Config) {
@@ -1034,13 +1240,6 @@ export class Submodule {
 
         this.#parentConfig = parentConfig;
         this.#config = await this.loadConfig();
-    }
-
-    public updateHash(hash: Crypto.Hash) {
-        hash.update(this.name);
-        hash.update(this.path);
-
-        return this;
     }
 
     public resolvePath() {
@@ -1064,17 +1263,20 @@ export class Submodule {
     }
 
     public async loadConfig() {
-        // const configPath = Path.join(this.resolvePath(), '.gitflow.yml');
-        // const config = await loadConfig(configPath, this.parentConfig, `${this.parentConfig.pathspec + '/'}${this.name}`);
-        const config = await loadRepoConfig({
+        const config = await loadV2Config(this.url ?? 'branch://gitflow', this.parentConfig.settings, {
             cwd: this.resolvePath(),
             parentConfig: this.parentConfig,
-            pathspecPrefix: `${this.parentConfig.pathspec + '/'}${this.name}`
+            parentSubmodule: this,
+            pathspecPrefix: `${this.parentConfig.pathspec + '/'}${this.name}`,
+            stdout: process.stdout //TMP!!
         });
 
         return config;
     }
 }
+
+export interface Submodule extends SubmoduleBase {}
+applyMixins(Submodule, [ SubmoduleBase ]);
 
 export type FeatureParams = Pick<Feature, 'name' | 'branchName' | 'sourceSha'> & Partial<Pick<Feature, 'sources'>>;
 export class Feature {
@@ -1131,17 +1333,6 @@ export class Feature {
         this.#parentSupport = parentSupport;
     }
 
-    public updateHash(hash: Crypto.Hash) {
-        hash.update(this.name);
-        hash.update(this.branchName);
-        hash.update(this.sourceSha);
-
-        for (const source of this.sources)
-            hash.update(source);
-
-        return this;
-    }
-
     public async init({ stdout, dryRun }: ExecParams = {}) {
         if (!await this.parentConfig.branchExists(this.branchName, { stdout }))
             await this.parentConfig.createBranch(this.branchName, { source: this.sourceSha, stdout, dryRun });
@@ -1179,11 +1370,14 @@ export class Feature {
     }
 }
 
+export interface Feature extends FeatureBase {}
+applyMixins(Feature, [ FeatureBase ]);
+
 export type ReleaseParams = Pick<Release, 'name' | 'branchName' | 'sourceSha'> & Partial<Pick<Release, 'sources'>>;
 export class Release {
     public name: string;
     public branchName: string;
-    public sourceSha?: string;
+    public sourceSha: string;
     public sources: string[];
 
     #initialized: boolean = false;
@@ -1234,17 +1428,6 @@ export class Release {
         this.#parentSupport = parentSupport;
     }
 
-    public updateHash(hash: Crypto.Hash) {
-        hash.update(this.name);
-        hash.update(this.branchName);
-        this.sourceSha && hash.update(this.sourceSha);
-
-        for (const source of this.sources)
-            hash.update(source);
-
-        return this;
-    }
-
     public async init({ stdout, dryRun }: ExecParams = {}) {
         if (!await this.parentConfig.branchExists(this.branchName, { stdout }))
             await this.parentConfig.createBranch(this.branchName, { source: this.sourceSha, stdout, dryRun });
@@ -1267,11 +1450,14 @@ export class Release {
     }
 }
 
+export interface Release extends ReleaseBase {}
+applyMixins(Release, [ ReleaseBase ]);
+
 export type HotfixParams = Pick<Hotfix, 'name' | 'branchName' | 'sourceSha'> & Partial<Pick<Hotfix, 'sources'>>;
 export class Hotfix {
     public name: string;
     public branchName: string;
-    public sourceSha?: string;
+    public sourceSha: string;
     public sources: string[];
 
     #initialized: boolean = false;
@@ -1322,17 +1508,6 @@ export class Hotfix {
         this.#parentSupport = parentSupport;
     }
 
-    public updateHash(hash: Crypto.Hash) {
-        hash.update(this.name);
-        hash.update(this.branchName);
-        this.sourceSha && hash.update(this.sourceSha);
-
-        for (const source of this.sources)
-            hash.update(source);
-
-        return this;
-    }
-
     public async init({ stdout, dryRun }: ExecParams = {}) {
         if (!await this.parentConfig.branchExists(this.branchName, { stdout }))
             await this.parentConfig.createBranch(this.branchName, { source: this.sourceSha, stdout, dryRun });
@@ -1355,12 +1530,15 @@ export class Hotfix {
     }
 }
 
+export interface Hotfix extends HotfixBase {}
+applyMixins(Hotfix, [ HotfixBase ]);
+
 export type SupportParams = Pick<Support, 'name' | 'masterBranchName' | 'developBranchName' | 'sourceSha' | 'features' | 'releases' | 'hotfixes'>;
 export class Support {
     public name: string;
     public masterBranchName: string;
     public developBranchName: string;
-    public sourceSha?: string;
+    public sourceSha: string;
 
     public features: Feature[];
     public releases: Release[];
@@ -1416,22 +1594,6 @@ export class Support {
         await Bluebird.map(this.hotfixes, i => i.register(parentConfig, this));
     }
 
-    public updateHash(hash: Crypto.Hash) {
-        hash.update(this.name);
-        hash.update(this.masterBranchName);
-        hash.update(this.developBranchName);
-        this.sourceSha && hash.update(this.sourceSha);
-
-        for (const feature of this.features)
-            feature.updateHash(hash);
-        for (const release of this.releases)
-            release.updateHash(hash);
-        for (const hotfix of this.hotfixes)
-            hotfix.updateHash(hash);
-
-        return this;
-    }
-
     public async init({ stdout, dryRun }: ExecParams = {}) {
         if (!await this.parentConfig.branchExists(this.masterBranchName, { stdout }))
             await this.parentConfig.createBranch(this.masterBranchName, { source: this.sourceSha, stdout, dryRun });
@@ -1477,6 +1639,9 @@ export class Support {
     }
 }
 
+export interface Support extends SupportBase {}
+applyMixins(Support, [ SupportBase ]);
+
 export type ExecParams = Omit<ExecOptions, 'cwd'> & { basePath?: string };
 export interface MergeParams {
     squash?: boolean;
@@ -1496,4 +1661,7 @@ export interface TagParams {
 }
 export interface CommitParams {
     amend?: boolean;
+}
+export interface PushParams {
+    setUpstream?: boolean;
 }

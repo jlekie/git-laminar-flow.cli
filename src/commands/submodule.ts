@@ -2,7 +2,7 @@ import { Command, Option } from 'clipanion';
 
 import { BaseCommand } from './common';
 
-import { loadRepoConfig } from '../lib/config';
+import { loadV2Config } from '../lib/config';
 
 export class CloneCommand extends BaseCommand {
     static paths = [['submodules', 'clone']];
@@ -15,6 +15,6 @@ export class CloneCommand extends BaseCommand {
     });
 
     public async execute() {
-        const config = await loadRepoConfig({ stdout: this.context.stdout, dryRun: this.dryRun });
+        const config = await this.loadConfig();
     }
 }

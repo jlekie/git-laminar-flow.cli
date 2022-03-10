@@ -1,10 +1,13 @@
 {
-  "name": "@jlekie/git-laminar-flow",
+  "name": "@jlekie/git-laminar-flow-cli",
   "version": "1.0.0-alpha.1",
   "license": "UNLICENSED",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "bin": "dist/run.js",
+  "bin": {
+    "git-laminar-flow": "dist/run.js",
+    "glf": "dist/run.js"
+  },
   "scripts": {
     "build": "tsc --build",
     "watch": "tsc --watch --preserveWatchOutput"
@@ -14,8 +17,11 @@
     "/dist"
   ],
   "dependencies": {
+    "@jlekie/git-laminar-flow": "^1.0.0-alpha",
+    "axios": "^0.26.0",
     "bluebird": "^3.7.2",
     "chalk": "^4.1.2",
+    "cli-table": "^0.3.11",
     "clipanion": "^3.2.0-rc.3",
     "fs-extra": "^10.0.0",
     "glob": "^7.2.0",
@@ -25,11 +31,13 @@
     "minimatch": "^3.0.4",
     "prompts": "^2.4.2",
     "source-map-support": "^0.5.20",
+    "tmp-promise": "^3.0.3",
     "uuid": "^8.3.2",
     "zod": "^3.11.6"
   },
   "devDependencies": {
     "@types/bluebird": "^3",
+    "@types/cli-table": "^0.3.0",
     "@types/fs-extra": "^9.0.13",
     "@types/glob": "^7",
     "@types/js-yaml": "^4",

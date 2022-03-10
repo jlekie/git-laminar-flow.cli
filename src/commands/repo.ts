@@ -2,6 +2,7 @@ import { Command, Option } from 'clipanion';
 import * as Minimatch from 'minimatch';
 import * as Bluebird from 'bluebird';
 import * as Chalk from 'chalk';
+import Table = require('cli-table');
 
 import * as FS from 'fs-extra';
 import * as Path from 'path';
@@ -12,7 +13,7 @@ import { URL } from 'url';
 
 import { BaseCommand } from './common';
 
-import { loadRepoConfig, Config, Feature, StateProxy } from '../lib/config';
+import { loadV2Config, Config, Feature, StateProxy } from '../lib/config';
 import { loadState } from '../lib/state';
 
 export class InitCommand extends BaseCommand {
@@ -29,7 +30,7 @@ export class InitCommand extends BaseCommand {
     });
 
     public async execute() {
-        const config = await loadRepoConfig({ stdout: this.context.stdout, dryRun: this.dryRun });
+        const config = await this.loadConfig();
         const targetConfigs = await config.resolveFilteredConfigs({
             included: this.include ?? [ 'repo://**' ],
             excluded: this.exclude
@@ -53,7 +54,7 @@ export class CheckoutCommand extends BaseCommand {
     });
 
     public async execute() {
-        const config = await loadRepoConfig({ stdout: this.context.stdout, dryRun: this.dryRun });
+        const config = await this.loadConfig();
         const targetConfigs = await config.resolveFilteredConfigs({
             included: this.include,
             excluded: this.exclude
@@ -98,7 +99,7 @@ export class FetchCommand extends BaseCommand {
     });
 
     public async execute() {
-        const config = await loadRepoConfig({ stdout: this.context.stdout, dryRun: this.dryRun });
+        const config = await this.loadConfig();
 
         const targetConfigs = [
             config,
@@ -121,7 +122,7 @@ export class ExecCommand extends BaseCommand {
     });
 
     public async execute() {
-        const config = await loadRepoConfig({ stdout: this.context.stdout, dryRun: this.dryRun });
+        const config = await this.loadConfig();
         const targetConfigs = await config.resolveFilteredConfigs({
             included: this.include,
             excluded: this.exclude
@@ -146,7 +147,7 @@ export class StatusCommand extends BaseCommand {
     });
 
     public async execute() {
-        const config = await loadRepoConfig({ stdout: this.context.stdout, dryRun: this.dryRun });
+        const config = await this.loadConfig();
         const targetConfigs = await config.resolveFilteredConfigs({
             included: this.include,
             excluded: this.exclude
@@ -183,7 +184,7 @@ export class SyncCommand extends BaseCommand {
     });
 
     public async execute() {
-        const config = await loadRepoConfig({ stdout: this.context.stdout, dryRun: this.dryRun });
+        const config = await this.loadConfig();
         const targetConfigs = await config.resolveFilteredConfigs({
             included: this.include,
             excluded: this.exclude
@@ -237,7 +238,7 @@ export class CloseCommand extends BaseCommand {
     });
 
     public async execute() {
-        const config = await loadRepoConfig({ stdout: this.context.stdout, dryRun: this.dryRun });
+        const config = await this.loadConfig();
         const targetConfigs = await config.resolveFilteredConfigs({
             included: this.include,
             excluded: this.exclude
@@ -493,6 +494,100 @@ export class CloseCommand extends BaseCommand {
             catch (err) {
                 this.logError(`[${repoRelativePath}] ${err.toString()}`);
             }
+        }
+    }
+}
+
+export class ListCommand extends BaseCommand {
+    static paths = [['list']];
+
+    include = Option.Array('--include');
+    exclude = Option.Array('--exclude');
+
+    static usage = Command.Usage({
+        description: 'Execute CLI command in repo'
+    });
+
+    public async execute() {
+        const config = await this.loadConfig();
+        const targetConfigs = await config.resolveFilteredConfigs({
+            included: this.include,
+            excluded: this.exclude
+        });
+
+        for (const config of targetConfigs) {
+            const table = new Table({
+                chars: { 'top': '═' , 'top-mid': '╤' , 'top-left': '╔' , 'top-right': '╗'
+                        , 'bottom': '═' , 'bottom-mid': '╧' , 'bottom-left': '╚' , 'bottom-right': '╝'
+                        , 'left': '║' , 'left-mid': '╟' , 'mid': '─' , 'mid-mid': '┼'
+                        , 'right': '║' , 'right-mid': '╢' , 'middle': '│' }
+            });
+            table.push(
+                { 'Path': config.pathspec },
+                { 'Identifier': config.identifier }
+            );
+
+            if (config.upstreams.length) {
+                const featureTable = new Table({
+                    head: ['Name', 'Url']
+                });
+                featureTable.push(...config.upstreams.map(i => [ i.name, i.url ]));
+
+                table.push({ 'Upstreams': featureTable.toString() });
+            }
+            else {
+                table.push({ 'Upstreams': 'None' });
+            }
+
+            if (config.features.length) {
+                const featureTable = new Table({
+                    head: ['Name', 'Branch Name', 'Source SHA']
+                });
+                featureTable.push(...config.features.map(i => [ i.name, i.branchName, i.sourceSha ]));
+
+                table.push({ 'Features': featureTable.toString() });
+            }
+            else {
+                table.push({ 'Features': 'None' });
+            }
+
+            if (config.releases.length) {
+                const releaseTable = new Table({
+                    head: ['Name', 'Branch Name', 'Source SHA']
+                });
+                releaseTable.push(...config.releases.map(i => [ i.name, i.branchName, i.sourceSha ]));
+
+                table.push({ 'Releases': releaseTable.toString() });
+            }
+            else {
+                table.push({ 'Releases': 'None' });
+            }
+
+            if (config.hotfixes.length) {
+                const hotfixTable = new Table({
+                    head: ['Name', 'Branch Name', 'Source SHA']
+                });
+                hotfixTable.push(...config.hotfixes.map(i => [ i.name, i.branchName, i.sourceSha ]));
+
+                table.push({ 'Hotfixes': hotfixTable.toString() });
+            }
+            else {
+                table.push({ 'Hotfixes': 'None' });
+            }
+
+            if (config.supports.length) {
+                const supportTable = new Table({
+                    head: ['Name', 'Master Branch Name', 'Develop Branch Name', 'Source SHA']
+                });
+                supportTable.push(...config.supports.map(i => [ i.name, i.masterBranchName, i.developBranchName, i.sourceSha ]));
+
+                table.push({ 'Supports': supportTable.toString() });
+            }
+            else {
+                table.push({ 'Supports': 'None' });
+            }
+
+            this.context.stdout.write(table.toString() + '\n\n');
         }
     }
 }

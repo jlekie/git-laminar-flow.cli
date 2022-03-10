@@ -6,7 +6,7 @@ import * as Chalk from 'chalk';
 
 import { BaseCommand } from './common';
 
-import { loadRepoConfig, Config, Release, Hotfix, Support } from '../lib/config';
+import { loadV2Config, Config, Release, Hotfix, Support } from '../lib/config';
 
 export class CreateCommand extends BaseCommand {
     static paths = [['hotfix', 'create']];
@@ -26,7 +26,7 @@ export class CreateCommand extends BaseCommand {
     });
 
     public async execute() {
-        const config = await loadRepoConfig({ stdout: this.context.stdout, dryRun: this.dryRun });
+        const config = await this.loadConfig();
         const targetConfigs = await config.resolveFilteredConfigs({
             included: this.include,
             excluded: this.exclude

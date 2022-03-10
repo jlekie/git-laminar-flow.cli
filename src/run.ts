@@ -19,6 +19,7 @@ cli.register(RepoCommands.ExecCommand);
 cli.register(RepoCommands.StatusCommand);
 cli.register(RepoCommands.SyncCommand);
 cli.register(RepoCommands.CloseCommand);
+cli.register(RepoCommands.ListCommand);
 
 cli.register(SubmoduleCommands.CloneCommand);
 
@@ -30,6 +31,7 @@ cli.register(SupportCommands.CreateCommand);
 cli.register(SupportCommands.ActivateCommand);
 
 cli.register(ConfigCommands.ImportCommand);
+cli.register(ConfigCommands.EditCommand);
 
 cli.register(Builtins.HelpCommand);
 cli.register(Builtins.VersionCommand);
