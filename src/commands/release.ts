@@ -1,18 +1,82 @@
 import { Command, Option } from 'clipanion';
 import * as Minimatch from 'minimatch';
 import * as Bluebird from 'bluebird';
+import * as _ from 'lodash';
+import * as Zod from 'zod';
 
 import * as Chalk from 'chalk';
+import * as Prompts from 'prompts';
 
 import { BaseCommand } from './common';
 
 import { loadV2Config, Config, Release, Support } from '../lib/config';
+import { createRelease } from '../lib/actions';
 
+export class CreateInteractiveCommand extends BaseCommand {
+    static paths = [['release', 'create']];
+
+    releaseName = Option.String('--name');
+    branchName = Option.String('--branch-name');
+    from = Option.String('--from');
+
+    include = Option.Array('--include');
+    exclude = Option.Array('--exclude');
+
+    checkout = Option.Boolean('--checkout');
+
+    static usage = Command.Usage({
+        description: 'Create release',
+        category: 'Release'
+    });
+
+    public async execute() {
+        Prompts.override({
+            releaseName: this.releaseName,
+            branchName: this.branchName,
+            from: this.from,
+            checkout: this.checkout
+        });
+
+        const rootConfig = await this.loadConfig();
+        const targetConfigs = await rootConfig.resolveFilteredConfigs({
+            included: this.include,
+            excluded: this.exclude
+        });
+
+        await createRelease(rootConfig, {
+            name: () => this.prompt('releaseName', Zod.string().nonempty(), {
+                type: 'text',
+                message: 'Release Name'
+            }),
+            from: ({ config }) => this.prompt('from', Zod.string().url(), {
+                type: 'text',
+                message: `[${Chalk.magenta(config.pathspec)}] From`,
+                initial: 'branch://develop'
+            }),
+            branchName: ({ config, fromElement, releaseName }) => this.prompt('branchName', Zod.string(), {
+                type: 'text',
+                message: `[${Chalk.magenta(config.pathspec)}] Branch Name`,
+                initial: `${fromElement.type === 'support' ? `support/${fromElement.support.name}/` : ''}release/${releaseName}`
+            }),
+            configs: ({ configs }) => this.prompt('configs', Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()), {
+                type: 'multiselect',
+                message: 'Select Modules',
+                choices: configs.map(c => ({ title: c.pathspec, value: c.identifier, selected: targetConfigs.some(tc => tc.identifier === c.identifier) }))
+            }),
+            checkout: () => this.prompt('checkout', Zod.boolean(), {
+                type: 'confirm',
+                message: 'Checkout'
+            }),
+            stdout: this.context.stdout,
+            dryRun: this.dryRun
+        });
+    }
+}
 export class CreateCommand extends BaseCommand {
     static paths = [['release', 'create']];
 
     releaseName = Option.String('--name', { required: true });
-    branchName = Option.String('--branch-name', { required: false });
+    branchName = Option.String('--branch-name');
     from = Option.String('--from', 'branch://develop');
 
     include = Option.Array('--include');
@@ -26,53 +90,21 @@ export class CreateCommand extends BaseCommand {
     });
 
     public async execute() {
-        const config = await this.loadConfig();
-        const targetConfigs = await config.resolveFilteredConfigs({
+        const rootConfig = await this.loadConfig();
+        const targetConfigs = await rootConfig.resolveFilteredConfigs({
             included: this.include,
             excluded: this.exclude
         });
 
-        const featureFqn = config.resolveFeatureFqn(this.releaseName);
-
-        for (const config of targetConfigs) {
-            const fromElement = await config.parseElement(this.from);
-            const fromBranch = await (async () => {
-                if (fromElement.type === 'branch')
-                    return fromElement.branch;
-                else if (fromElement.type === 'repo')
-                    return fromElement.config.resolveCurrentBranch();
-                else if (fromElement.type === 'feature')
-                    return fromElement.feature.branchName;
-                else if (fromElement.type === 'release')
-                    return fromElement.release.branchName;
-                else if (fromElement.type === 'hotfix')
-                    return fromElement.hotfix.branchName;
-                else if (fromElement.type === 'support')
-                    return fromElement.support.developBranchName;
-                else
-                    throw new Error(`Cannot derive source branch from ${this.from}`);
-            })();
-
-            const branchName = this.branchName ?? `${fromElement.type === 'support' ? `support/${fromElement.support.name}/` : ''}release/${this.releaseName}`;
-            const source = fromElement.type === 'support' ? fromElement.support : config;
-
-            if (source.releases.some(f => f.name === featureFqn))
-                continue;
-
-            const release = new Release({
-                name: featureFqn,
-                branchName,
-                sourceSha: await config.resolveCommitSha(fromBranch)
-            });
-            source.releases.push(release);
-            await release.register(config, source instanceof Support ? source : undefined);
-
-            await release.init({ stdout: this.context.stdout, dryRun: this.dryRun });
-            await config.save({ stdout: this.context.stdout, dryRun: this.dryRun });
-
-            if (this.checkout)
-                await config.checkoutBranch(release.branchName, { stdout: this.context.stdout, dryRun: this.dryRun });
-        }
+        await createRelease(rootConfig, {
+            name: async () => this.releaseName,
+            from: () => this.from,
+            branchName: ({ fromElement, releaseName }) => this.branchName ?? `${fromElement.type === 'support' ? `support/${fromElement.support.name}/` : ''}release/${releaseName}`,
+            configs: () => targetConfigs,
+            checkout: () => this.checkout,
+            stdout: this.context.stdout,
+            dryRun: this.dryRun
+        });
     }
 }
 

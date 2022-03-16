@@ -1,8 +1,7 @@
 import * as _ from 'lodash';
 import * as Stream from 'stream';
 
-import { Config, Feature, Support, Element } from './config';
-import { Lazy, lazify, RequiredKeys, OptionalKeys } from './misc';
+import { Config, Feature, Release, Hotfix, Support, Element } from './config';
 
 export interface CommonParams {
     stdout?: Stream.Writable;
@@ -15,7 +14,7 @@ export type ActionParams<T> = CommonParams & {
         : T[K] extends ActionParam<infer RT, infer PT> ? ActionParam<RT, PT> : () => T[K] | Promise<T[K]>
 }
 
-export async function createFeature(config: Config, { stdout, dryRun, ...params }: ActionParams<{
+export async function createFeature(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
     name: ActionParam<string>;
     configs: ActionParam<Config[], { configs: Config[] }>;
     from?: ActionParam<string, { config: Config }>;
@@ -24,7 +23,7 @@ export async function createFeature(config: Config, { stdout, dryRun, ...params 
 }>) {
     const featureName = await params.name();
 
-    const allConfigs = config.flattenConfigs();
+    const allConfigs = rootConfig.flattenConfigs();
     const configs = await params.configs({ configs: allConfigs });
     for (const config of configs) {
         const from = await params.from?.({ config }) ?? 'branch://develop';
@@ -68,62 +67,169 @@ export async function createFeature(config: Config, { stdout, dryRun, ...params 
     }
 }
 
-// import * as _ from 'lodash';
-// import * as Bluebird from 'bluebird';
+export async function createRelease(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
+    name: ActionParam<string>;
+    configs: ActionParam<Config[], { configs: Config[] }>;
+    from?: ActionParam<string, { config: Config }>;
+    branchName: ActionParam<string, { config: Config, fromElement: Element, releaseName: string }>;
+    checkout?: ActionParam<boolean>
+}>) {
+    const releaseName = await params.name();
 
-// import * as Chalk from 'chalk';
+    const allConfigs = rootConfig.flattenConfigs();
+    const configs = await params.configs({ configs: allConfigs });
+    for (const config of configs) {
+        const from = await params.from?.({ config }) ?? 'branch://develop';
+        const fromElement = await config.parseElement(from);
+        const fromBranch = await (async () => {
+            if (fromElement.type === 'branch')
+                return fromElement.branch;
+            else if (fromElement.type === 'repo')
+                return fromElement.config.resolveCurrentBranch();
+            else if (fromElement.type === 'feature')
+                return fromElement.feature.branchName;
+            else if (fromElement.type === 'release')
+                return fromElement.release.branchName;
+            else if (fromElement.type === 'hotfix')
+                return fromElement.hotfix.branchName;
+            else if (fromElement.type === 'support')
+                return fromElement.support.developBranchName;
+            else
+                throw new Error(`Cannot derive source branch from ${from}`);
+        })();
 
-// import * as Path from 'path';
-// import * as FS from 'fs-extra';
+        const branchName = await params.branchName({ config, fromElement, releaseName });
+        const source = fromElement.type === 'support' ? fromElement.support : config;
 
-// import * as Stream from 'stream';
+        if (source.releases.some(f => f.name === releaseName))
+            continue;
 
-// import { loadConfig } from './config';
-// import { exec } from './exec';
+        const release = new Release({
+            name: releaseName,
+            branchName,
+            sourceSha: await config.resolveCommitSha(fromBranch)
+        });
+        source.releases.push(release);
+        await release.register(config, source instanceof Support ? source : undefined);
 
-// export interface BaseParams {
-//     stdout?: Stream.Writable;
-//     configPath: string;
-//     dryRun?: boolean;
-// }
+        await release.init({ stdout: stdout, dryRun: dryRun });
+        await config.save({ stdout: stdout, dryRun: dryRun });
 
-// export interface InitParams extends BaseParams {
-//     repoBasePath?: string;
-//     createGitmodulesConfig: boolean;
-// }
-// export async function init({ configPath, repoBasePath, createGitmodulesConfig, stdout, dryRun }: InitParams) {
-//     const config = await loadConfig(configPath);
+        if (await params.checkout?.())
+            await config.checkoutBranch(release.branchName, { stdout: stdout, dryRun: dryRun });
+    }
+}
 
-//     await Bluebird.map(config.submodules, async repo => {
-//         const repoPath = Path.resolve(repoBasePath ?? '.', repo.path);
+export async function createHotfix(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
+    name: ActionParam<string>;
+    configs: ActionParam<Config[], { configs: Config[] }>;
+    from?: ActionParam<string, { config: Config }>;
+    branchName: ActionParam<string, { config: Config, fromElement: Element, hotfixName: string }>;
+    checkout?: ActionParam<boolean>
+}>) {
+    const hotfixName = await params.name();
 
-//         if (await FS.pathExists(repoPath)) {
-//             await repo.fetch({ basePath: repoBasePath, stdout, dryRun });
-//         }
-//         else {
-//             await repo.clone({ basePath: repoBasePath, stdout, dryRun });
-//         }
-//     }, { concurrency: 1 });
+    const allConfigs = rootConfig.flattenConfigs();
+    const configs = await params.configs({ configs: allConfigs });
+    for (const config of configs) {
+        const from = await params.from?.({ config }) ?? 'branch://develop';
+        const fromElement = await config.parseElement(from);
+        const fromBranch = await (async () => {
+            if (fromElement.type === 'branch')
+                return fromElement.branch;
+            else if (fromElement.type === 'repo')
+                return fromElement.config.resolveCurrentBranch();
+            else if (fromElement.type === 'feature')
+                return fromElement.feature.branchName;
+            else if (fromElement.type === 'release')
+                return fromElement.release.branchName;
+            else if (fromElement.type === 'hotfix')
+                return fromElement.hotfix.branchName;
+            else if (fromElement.type === 'support')
+                return fromElement.support.developBranchName;
+            else
+                throw new Error(`Cannot derive source branch from ${from}`);
+        })();
 
-//     if (!dryRun && createGitmodulesConfig) {
-//         stdout?.write(Chalk.cyan('Writing .gitmodules config...'));
+        const branchName = await params.branchName({ config, fromElement, hotfixName });
+        const source = fromElement.type === 'support' ? fromElement.support : config;
 
-//         const gitmodulesStream = FS.createWriteStream('.gitmodules');
-//         for (const repo of config.submodules) {
-//             const resolvedPath = Path.posix.join(repo.path);
+        if (source.releases.some(f => f.name === hotfixName))
+            continue;
 
-//             gitmodulesStream.write(`[submodule "${repo.name}"]\n`);
-//             gitmodulesStream.write(`    path = ${resolvedPath}\n`);
-//             gitmodulesStream.write(`    url = ""\n`);
-//         }
-//         gitmodulesStream.close();
-//     }
-// }
+        const hotfix = new Hotfix({
+            name: hotfixName,
+            branchName,
+            sourceSha: await config.resolveCommitSha(fromBranch)
+        });
+        source.hotfixes.push(hotfix);
+        await hotfix.register(config, source instanceof Support ? source : undefined);
 
-// export interface CreateFeatureParams extends BaseParams {
-// }
-// export async function createFeature({ configPath, ...params }: CreateFeatureParams) {
-//     const config = await loadConfig(configPath);
+        await hotfix.init({ stdout: stdout, dryRun: dryRun });
+        await config.save({ stdout: stdout, dryRun: dryRun });
 
+        if (await params.checkout?.())
+            await config.checkoutBranch(hotfix.branchName, { stdout: stdout, dryRun: dryRun });
+    }
+}
 
-// }
+export async function createSupport(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
+    name: ActionParam<string>;
+    configs: ActionParam<Config[], { configs: Config[] }>;
+    from?: ActionParam<string, { config: Config }>;
+    masterBranchName: ActionParam<string, { config: Config, supportName: string }>;
+    developBranchName: ActionParam<string, { config: Config, supportName: string }>;
+    checkout?: ActionParam<'master' | 'develop' | null | undefined>
+}>) {
+    const supportName = await params.name();
+
+    const allConfigs = rootConfig.flattenConfigs();
+    const configs = await params.configs({ configs: allConfigs });
+    for (const config of configs) {
+        const from = await params.from?.({ config }) ?? 'branch://master';
+        const fromElement = await config.parseElement(from);
+        const fromBranch = await (async () => {
+            if (fromElement.type === 'branch')
+                return fromElement.branch;
+            else if (fromElement.type === 'repo')
+                return fromElement.config.resolveCurrentBranch();
+            else if (fromElement.type === 'feature')
+                return fromElement.feature.branchName;
+            else if (fromElement.type === 'release')
+                return fromElement.release.branchName;
+            else if (fromElement.type === 'hotfix')
+                return fromElement.hotfix.branchName;
+            else if (fromElement.type === 'support')
+                return fromElement.support.developBranchName;
+            else
+                throw new Error(`Cannot derive source branch from ${from}`);
+        })();
+
+        const masterBranchName = await params.masterBranchName({ config, supportName });
+        const developBranchName = await params.developBranchName({ config, supportName });
+
+        if (config.supports.some(f => f.name === supportName))
+            continue;
+
+        const support = new Support({
+            name: supportName,
+            masterBranchName,
+            developBranchName,
+            sourceSha: await config.resolveCommitSha(fromBranch),
+            features: [],
+            releases: [],
+            hotfixes: []
+        });
+        config.supports.push(support);
+        await support.register(config);
+
+        await support.init({ stdout: stdout, dryRun: dryRun });
+        await config.save({ stdout: stdout, dryRun: dryRun });
+
+        const checkout = await params.checkout?.();
+        if (checkout === 'develop')
+            await config.checkoutBranch(support.developBranchName, { stdout: stdout, dryRun: dryRun });
+        else if (checkout === 'master')
+            await config.checkoutBranch(support.masterBranchName, { stdout: stdout, dryRun: dryRun });
+    }
+}

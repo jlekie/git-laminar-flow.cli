@@ -7,7 +7,7 @@ import { SubmoduleCommands, FeatureCommands, ReleaseCommands, RepoCommands, Hotf
 
 const [ node, app, ...args ] = process.argv;
 const cli = new Cli({
-    binaryName: 'git-laminar-flow',
+    binaryName: '[ git-laminar-flow, glf ]',
     binaryLabel: 'Git Laminar Flow',
     binaryVersion: '1.0.0'
 });
@@ -25,9 +25,9 @@ cli.register(RepoCommands.CreateCommand);
 cli.register(SubmoduleCommands.CloneCommand);
 
 process.stdout.isTTY ? cli.register(FeatureCommands.CreateInteractiveCommand) : cli.register(FeatureCommands.CreateCommand);
-cli.register(ReleaseCommands.CreateCommand);
-cli.register(HotfixCommands.CreateCommand);
-cli.register(SupportCommands.CreateCommand);
+process.stdout.isTTY ? cli.register(ReleaseCommands.CreateInteractiveCommand) : cli.register(ReleaseCommands.CreateCommand);
+process.stdout.isTTY ? cli.register(HotfixCommands.CreateInteractiveCommand) : cli.register(HotfixCommands.CreateCommand);
+process.stdout.isTTY ? cli.register(SupportCommands.CreateInteractiveCommand) : cli.register(SupportCommands.CreateCommand);
 
 cli.register(SupportCommands.ActivateCommand);
 

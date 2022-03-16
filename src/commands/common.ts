@@ -77,7 +77,7 @@ export abstract class BaseCommand extends Command {
         }
         catch (err) {
             if (err instanceof Zod.ZodError)
-                throw new Error(`Input validation failed: ${err.errors.map(e => e.message).join(', ')}`)
+                throw new Error(`Input validation failed (${params[name]}): ${err.errors.map(e => e.message).join(', ')}`)
             else
                 throw err;
         }
