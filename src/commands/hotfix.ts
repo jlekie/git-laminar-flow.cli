@@ -71,7 +71,7 @@ export class CreateCommand extends BaseCommand {
             await config.save({ stdout: this.context.stdout, dryRun: this.dryRun });
 
             if (this.checkout)
-                config.checkoutBranch(hotfix.branchName, { stdout: this.context.stdout, dryRun: this.dryRun });
+                await config.checkoutBranch(hotfix.branchName, { stdout: this.context.stdout, dryRun: this.dryRun });
         }
     }
 }

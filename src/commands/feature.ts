@@ -1,18 +1,84 @@
 import { Command, Option } from 'clipanion';
 import * as Minimatch from 'minimatch';
 import * as Bluebird from 'bluebird';
+import * as _ from 'lodash';
+import * as Zod from 'zod';
 
 import * as Chalk from 'chalk';
+
+import * as Prompts from 'prompts';
 
 import { BaseCommand } from './common';
 
 import { loadV2Config, Config, Feature, Support } from '../lib/config';
+import { createFeature } from '../lib/actions';
+
+export class CreateInteractiveCommand extends BaseCommand {
+    static paths = [['feature', 'create']];
+
+    featureName = Option.String('--name');
+    branchName = Option.String('--branch-name');
+    from = Option.String('--from');
+
+    include = Option.Array('--include');
+    exclude = Option.Array('--exclude');
+
+    checkout = Option.Boolean('--checkout');
+
+    static usage = Command.Usage({
+        description: 'Create feature',
+        category: 'Feature'
+    });
+
+    public async execute() {
+        Prompts.override({
+            featureName: this.featureName,
+            branchName: this.branchName,
+            from: this.from,
+            checkout: this.checkout
+        });
+
+        const rootConfig = await this.loadConfig();
+        const targetConfigs = await rootConfig.resolveFilteredConfigs({
+            included: this.include,
+            excluded: this.exclude
+        });
+
+        await createFeature(rootConfig, {
+            name: () => this.prompt('featureName', Zod.string().nonempty(), {
+                type: 'text',
+                message: 'Feature Name'
+            }),
+            from: ({ config }) => this.prompt('from', Zod.string().url(), {
+                type: 'text',
+                message: `[${Chalk.magenta(config.pathspec)}] From`,
+                initial: 'branch://develop'
+            }),
+            branchName: ({ config, fromElement, featureName }) => this.prompt('branchName', Zod.string(), {
+                type: 'text',
+                message: `[${Chalk.magenta(config.pathspec)}] Branch Name`,
+                initial: `${fromElement.type === 'support' ? `support/${fromElement.support.name}/` : ''}feature/${featureName}`
+            }),
+            configs: ({ configs }) => this.prompt('configs', Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()), {
+                type: 'multiselect',
+                message: 'Select Modules',
+                choices: configs.map(c => ({ title: c.pathspec, value: c.identifier, selected: targetConfigs.some(tc => tc.identifier === c.identifier) }))
+            }),
+            checkout: () => this.prompt('checkout', Zod.boolean(), {
+                type: 'confirm',
+                message: 'Checkout'
+            }),
+            stdout: this.context.stdout,
+            dryRun: this.dryRun
+        });
+    }
+}
 
 export class CreateCommand extends BaseCommand {
     static paths = [['feature', 'create']];
 
     featureName = Option.String('--name', { required: true });
-    branchName = Option.String('--branch-name', { required: false });
+    branchName = Option.String('--branch-name');
     from = Option.String('--from', 'branch://develop');
 
     include = Option.Array('--include');
@@ -26,53 +92,117 @@ export class CreateCommand extends BaseCommand {
     });
 
     public async execute() {
-        const config = await this.loadConfig();
-        const targetConfigs = await config.resolveFilteredConfigs({
+        const rootConfig = await this.loadConfig();
+        const targetConfigs = await rootConfig.resolveFilteredConfigs({
             included: this.include,
             excluded: this.exclude
         });
 
-        const featureFqn = config.resolveFeatureFqn(this.featureName);
+        await createFeature(rootConfig, {
+            name: async () => this.featureName ?? 'test',
+            from: () => this.from,
+            branchName: ({ fromElement, featureName }) => this.branchName ?? `${fromElement.type === 'support' ? `support/${fromElement.support.name}/` : ''}feature/${featureName}`,
+            configs: () => targetConfigs,
+            checkout: () => this.checkout,
+            stdout: this.context.stdout,
+            dryRun: this.dryRun
+        });
 
-        for (const config of targetConfigs) {
-            const fromElement = await config.parseElement(this.from);
-            const fromBranch = await (async () => {
-                if (fromElement.type === 'branch')
-                    return fromElement.branch;
-                else if (fromElement.type === 'repo')
-                    return fromElement.config.resolveCurrentBranch();
-                else if (fromElement.type === 'feature')
-                    return fromElement.feature.branchName;
-                else if (fromElement.type === 'release')
-                    return fromElement.release.branchName;
-                else if (fromElement.type === 'hotfix')
-                    return fromElement.hotfix.branchName;
-                else if (fromElement.type === 'support')
-                    return fromElement.support.developBranchName;
-                else
-                    throw new Error(`Cannot derive source branch from ${this.from}`);
-            })();
+        // const allConfigs = config.flattenConfigs();
+        // const targetConfigs = await config.resolveFilteredConfigs({
+        //     included: this.include,
+        //     excluded: this.exclude
+        // });
 
-            const branchName = this.branchName ?? `${fromElement.type === 'support' ? `support/${fromElement.support.name}/` : ''}feature/${this.featureName}`;
-            const source = fromElement.type === 'support' ? fromElement.support : config;
+        // const { featureName, configs } = await this.prompt({
+        //     featureName: Zod.string(),
+        //     configs: Zod.string().array()
+        // }, {
+        //     featureName: {
+        //         prompt: {
+        //             type: 'text',
+        //             message: 'Feature Name'
+        //         },
+        //         handler: () => this.featureName
+        //     },
+        //     configs: {
+        //         prompt: {
+        //             type: 'multiselect',
+        //             message: 'Select Modules',
+        //             choices: allConfigs.map(c => ({ title: c.pathspec, value: c.identifier, selected: targetConfigs.some(tc => tc.identifier === c.identifier) }))
+        //         },
+        //         handler: () => targetConfigs.map(c => c.identifier)
+        //     }
+        // }, ({ configs, ...params }) => ({
+        //     ...params,
+        //     configs: _(configs).map(id => allConfigs.find(c => c.identifier === id)).compact().value()
+        // }));
 
-            if (source.features.some(f => f.name === featureFqn))
-                continue;
+        // for (const config of configs) {
+        //     const { from } = await this.prompt({
+        //         from: Zod.string()
+        //     }, {
+        //         from: {
+        //             prompt: {
+        //                 type: 'text',
+        //                 message: `[${config.pathspec}] Feature Branch Source`,
+        //                 initial: 'branch://develop'
+        //             },
+        //             handler: () => this.from
+        //         }
+        //     });
 
-            const feature = new Feature({
-                name: featureFqn,
-                branchName,
-                sourceSha: await config.resolveCommitSha(fromBranch)
-            });
-            source.features.push(feature);
-            await feature.register(config, source instanceof Support ? source : undefined);
+        //     const fromElement = await config.parseElement(from);
+        //     const fromBranch = await (async () => {
+        //         if (fromElement.type === 'branch')
+        //             return fromElement.branch;
+        //         else if (fromElement.type === 'repo')
+        //             return fromElement.config.resolveCurrentBranch();
+        //         else if (fromElement.type === 'feature')
+        //             return fromElement.feature.branchName;
+        //         else if (fromElement.type === 'release')
+        //             return fromElement.release.branchName;
+        //         else if (fromElement.type === 'hotfix')
+        //             return fromElement.hotfix.branchName;
+        //         else if (fromElement.type === 'support')
+        //             return fromElement.support.developBranchName;
+        //         else
+        //             throw new Error(`Cannot derive source branch from ${from}`);
+        //     })();
 
-            await feature.init({ stdout: this.context.stdout, dryRun: this.dryRun });
-            await config.save({ stdout: this.context.stdout, dryRun: this.dryRun });
+        //     const { branchName } = await this.prompt({
+        //         branchName: Zod.string()
+        //     }, {
+        //         branchName: {
+        //             prompt: {
+        //                 type: 'text',
+        //                 message: `[${config.pathspec}] Branch Name`,
+        //                 initial: `${fromElement.type === 'support' ? `support/${fromElement.support.name}/` : ''}feature/${featureName}`
+        //             },
+        //             handler: () => this.branchName
+        //         }
+        //     });
 
-            if (this.checkout)
-                config.checkoutBranch(feature.branchName, { stdout: this.context.stdout, dryRun: this.dryRun });
-        }
+        //     // const branchName = this.branchName ?? `${fromElement.type === 'support' ? `support/${fromElement.support.name}/` : ''}feature/${this.featureName}`;
+        //     const source = fromElement.type === 'support' ? fromElement.support : config;
+
+        //     if (source.features.some(f => f.name === featureName))
+        //         continue;
+
+        //     const feature = new Feature({
+        //         name: featureName,
+        //         branchName,
+        //         sourceSha: await config.resolveCommitSha(fromBranch)
+        //     });
+        //     source.features.push(feature);
+        //     await feature.register(config, source instanceof Support ? source : undefined);
+
+        //     await feature.init({ stdout: this.context.stdout, dryRun: this.dryRun });
+        //     await config.save({ stdout: this.context.stdout, dryRun: this.dryRun });
+
+        //     if (this.checkout)
+        //         config.checkoutBranch(feature.branchName, { stdout: this.context.stdout, dryRun: this.dryRun });
+        // }
     }
 }
 

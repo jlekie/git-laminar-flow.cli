@@ -28,6 +28,7 @@ import {
 
 import { exec, execCmd, ExecOptions } from './exec';
 import { Settings } from './settings';
+import { Delegated, DelegatedPreserve, PromisifyAll } from './misc';
 
 function applyMixins(derivedCtor: any, constructors: any[]) {
     constructors.forEach((baseCtor) => {
@@ -66,7 +67,7 @@ class TestTransform extends Transform {
 
         this.#last += this.#decoder.write(data);
 
-        let list = this.#last.split(/\n/);
+        const list = this.#last.split(/\n/);
         this.#last = list.pop();
 
         for (let i = 0; i < list.length; i++)

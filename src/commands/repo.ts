@@ -1,6 +1,7 @@
 import { Command, Option } from 'clipanion';
 import * as Minimatch from 'minimatch';
 import * as Bluebird from 'bluebird';
+import * as _ from 'lodash';
 import * as Chalk from 'chalk';
 import Table = require('cli-table');
 
@@ -11,9 +12,11 @@ import * as Prompts from 'prompts';
 
 import { URL } from 'url';
 
+import { parseElementUri } from '@jlekie/git-laminar-flow';
+
 import { BaseCommand } from './common';
 
-import { loadV2Config, Config, Feature, StateProxy } from '../lib/config';
+import { loadV2Config, Config, Feature, StateProxy, Support } from '../lib/config';
 import { loadState } from '../lib/state';
 
 export class InitCommand extends BaseCommand {
@@ -588,6 +591,73 @@ export class ListCommand extends BaseCommand {
             }
 
             this.context.stdout.write(table.toString() + '\n\n');
+        }
+    }
+}
+
+export class CreateCommand extends BaseCommand {
+    static paths = [['create', 'feature']];
+
+    include = Option.Array('--include');
+    exclude = Option.Array('--exclude');
+
+    featureName = Option.String('--name', { required: true });
+    branchName = Option.String('--branch');
+    from = Option.String('--from', 'branch://develop');
+    checkout = Option.Boolean('--checkout', false);
+
+    public async execute() {
+        const config = await this.loadConfig();
+        const targetConfigs = await config.resolveFilteredConfigs({
+            included: this.include,
+            excluded: this.exclude
+        });
+
+        const configs = await Prompts({
+            type: 'multiselect',
+            name: 'value',
+            message: 'Select Modules',
+            choices: targetConfigs.map(c => ({ title: c.pathspec, value: c.identifier, selected: true }))
+        }).then(d => _(d.value).map(id => targetConfigs.find(c => c.identifier === id)).compact().value());
+
+        for (const config of configs) {
+            const fromElement = await config.parseElement(this.from);
+            const fromBranch = await (async () => {
+                if (fromElement.type === 'branch')
+                    return fromElement.branch;
+                else if (fromElement.type === 'repo')
+                    return fromElement.config.resolveCurrentBranch();
+                else if (fromElement.type === 'feature')
+                    return fromElement.feature.branchName;
+                else if (fromElement.type === 'release')
+                    return fromElement.release.branchName;
+                else if (fromElement.type === 'hotfix')
+                    return fromElement.hotfix.branchName;
+                else if (fromElement.type === 'support')
+                    return fromElement.support.developBranchName;
+                else
+                    throw new Error(`Cannot derive source branch from ${this.from}`);
+            })();
+
+            const branchName = this.branchName ?? `${fromElement.type === 'support' ? `support/${fromElement.support.name}/` : ''}feature/${this.featureName}`;
+            const source = fromElement.type === 'support' ? fromElement.support : config;
+
+            if (source.features.some(f => f.name === this.featureName))
+                continue;
+
+            const feature = new Feature({
+                name: this.featureName,
+                branchName,
+                sourceSha: await config.resolveCommitSha(fromBranch)
+            });
+            source.features.push(feature);
+            await feature.register(config, source instanceof Support ? source : undefined);
+
+            await feature.init({ stdout: this.context.stdout, dryRun: this.dryRun });
+            await config.save({ stdout: this.context.stdout, dryRun: this.dryRun });
+
+            if (this.checkout)
+                await config.checkoutBranch(feature.branchName, { stdout: this.context.stdout, dryRun: this.dryRun });
         }
     }
 }

@@ -55,9 +55,9 @@ export class CreateCommand extends BaseCommand {
             await config.save({ stdout: this.context.stdout, dryRun: this.dryRun });
 
             if (this.checkout === 'develop')
-                config.checkoutBranch(support.developBranchName, { stdout: this.context.stdout, dryRun: this.dryRun });
+                await config.checkoutBranch(support.developBranchName, { stdout: this.context.stdout, dryRun: this.dryRun });
             else if (this.checkout === 'master')
-                config.checkoutBranch(support.masterBranchName, { stdout: this.context.stdout, dryRun: this.dryRun });
+                await config.checkoutBranch(support.masterBranchName, { stdout: this.context.stdout, dryRun: this.dryRun });
         }
     }
 }
@@ -94,9 +94,9 @@ export class ActivateCommand extends BaseCommand {
             await config.setStateValue('activeSupport', featureFqn);
 
             if (this.checkout === 'develop')
-                config.checkoutBranch(support.developBranchName, { stdout: this.context.stdout, dryRun: this.dryRun });
+                await config.checkoutBranch(support.developBranchName, { stdout: this.context.stdout, dryRun: this.dryRun });
             else if (this.checkout === 'master')
-                config.checkoutBranch(support.masterBranchName, { stdout: this.context.stdout, dryRun: this.dryRun });
+                await config.checkoutBranch(support.masterBranchName, { stdout: this.context.stdout, dryRun: this.dryRun });
         }
     }
 }

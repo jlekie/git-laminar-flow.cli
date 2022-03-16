@@ -20,10 +20,11 @@ cli.register(RepoCommands.StatusCommand);
 cli.register(RepoCommands.SyncCommand);
 cli.register(RepoCommands.CloseCommand);
 cli.register(RepoCommands.ListCommand);
+cli.register(RepoCommands.CreateCommand);
 
 cli.register(SubmoduleCommands.CloneCommand);
 
-cli.register(FeatureCommands.CreateCommand);
+process.stdout.isTTY ? cli.register(FeatureCommands.CreateInteractiveCommand) : cli.register(FeatureCommands.CreateCommand);
 cli.register(ReleaseCommands.CreateCommand);
 cli.register(HotfixCommands.CreateCommand);
 cli.register(SupportCommands.CreateCommand);
@@ -36,4 +37,6 @@ cli.register(ConfigCommands.EditCommand);
 cli.register(Builtins.HelpCommand);
 cli.register(Builtins.VersionCommand);
 
-cli.runExit(args);
+cli.runExit(args).catch(err => {
+    throw new Error(`Application failed to launch; ${err}`);
+});
