@@ -1,6 +1,8 @@
 import * as _ from 'lodash';
 import * as Stream from 'stream';
 
+import * as Chalk from 'chalk';
+
 import { Config, Feature, Release, Hotfix, Support, Element } from './config';
 
 export interface CommonParams {
@@ -26,6 +28,11 @@ export async function createFeature(rootConfig: Config, { stdout, dryRun, ...par
     const allConfigs = rootConfig.flattenConfigs();
     const configs = await params.configs({ configs: allConfigs });
     for (const config of configs) {
+        if (config.features.some(f => f.name === featureName)) {
+            stdout?.write(Chalk.gray(`[${Chalk.magenta(config.pathspec)}] Feature ${featureName} already exists; bypassing`) + '\n');
+            continue;
+        }
+
         const from = await params.from?.({ config }) ?? 'branch://develop';
         const fromElement = await config.parseElement(from);
         const fromBranch = await (async () => {
@@ -47,9 +54,6 @@ export async function createFeature(rootConfig: Config, { stdout, dryRun, ...par
 
         const branchName = await params.branchName({ config, fromElement, featureName });
         const source = fromElement.type === 'support' ? fromElement.support : config;
-
-        if (source.features.some(f => f.name === featureName))
-            continue;
 
         const feature = new Feature({
             name: featureName,
@@ -79,6 +83,11 @@ export async function createRelease(rootConfig: Config, { stdout, dryRun, ...par
     const allConfigs = rootConfig.flattenConfigs();
     const configs = await params.configs({ configs: allConfigs });
     for (const config of configs) {
+        if (config.releases.some(f => f.name === releaseName)) {
+            stdout?.write(Chalk.gray(`[${Chalk.magenta(config.pathspec)}] Release ${releaseName} already exists; bypassing`) + '\n');
+            continue;
+        }
+
         const from = await params.from?.({ config }) ?? 'branch://develop';
         const fromElement = await config.parseElement(from);
         const fromBranch = await (async () => {
@@ -100,9 +109,6 @@ export async function createRelease(rootConfig: Config, { stdout, dryRun, ...par
 
         const branchName = await params.branchName({ config, fromElement, releaseName });
         const source = fromElement.type === 'support' ? fromElement.support : config;
-
-        if (source.releases.some(f => f.name === releaseName))
-            continue;
 
         const release = new Release({
             name: releaseName,
@@ -132,6 +138,11 @@ export async function createHotfix(rootConfig: Config, { stdout, dryRun, ...para
     const allConfigs = rootConfig.flattenConfigs();
     const configs = await params.configs({ configs: allConfigs });
     for (const config of configs) {
+        if (config.hotfixes.some(f => f.name === hotfixName)) {
+            stdout?.write(Chalk.gray(`[${Chalk.magenta(config.pathspec)}] Hotfix ${hotfixName} already exists; bypassing`) + '\n');
+            continue;
+        }
+
         const from = await params.from?.({ config }) ?? 'branch://develop';
         const fromElement = await config.parseElement(from);
         const fromBranch = await (async () => {
@@ -153,9 +164,6 @@ export async function createHotfix(rootConfig: Config, { stdout, dryRun, ...para
 
         const branchName = await params.branchName({ config, fromElement, hotfixName });
         const source = fromElement.type === 'support' ? fromElement.support : config;
-
-        if (source.releases.some(f => f.name === hotfixName))
-            continue;
 
         const hotfix = new Hotfix({
             name: hotfixName,
@@ -186,6 +194,11 @@ export async function createSupport(rootConfig: Config, { stdout, dryRun, ...par
     const allConfigs = rootConfig.flattenConfigs();
     const configs = await params.configs({ configs: allConfigs });
     for (const config of configs) {
+        if (config.supports.some(f => f.name === supportName)) {
+            stdout?.write(Chalk.gray(`[${Chalk.magenta(config.pathspec)}] Support ${supportName} already exists; bypassing`) + '\n');
+            continue;
+        }
+
         const from = await params.from?.({ config }) ?? 'branch://master';
         const fromElement = await config.parseElement(from);
         const fromBranch = await (async () => {
@@ -207,9 +220,6 @@ export async function createSupport(rootConfig: Config, { stdout, dryRun, ...par
 
         const masterBranchName = await params.masterBranchName({ config, supportName });
         const developBranchName = await params.developBranchName({ config, supportName });
-
-        if (config.supports.some(f => f.name === supportName))
-            continue;
 
         const support = new Support({
             name: supportName,
