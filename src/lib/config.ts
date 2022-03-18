@@ -28,7 +28,7 @@ import {
 
 import { exec, execCmd, ExecOptions } from './exec';
 import { Settings } from './settings';
-import { Delegated, DelegatedPreserve, PromisifyAll } from './misc';
+import { Delegated, DelegatedPreserve, Lazy, PromisifyAll } from './misc';
 
 function applyMixins(derivedCtor: any, constructors: any[]) {
     constructors.forEach((baseCtor) => {
@@ -380,7 +380,7 @@ export type Element = {
 };
 export type NarrowedElement<T, N> = T extends { type: N } ? T : never;
 
-export type ConfigParams = Pick<Config, 'identifier' | 'upstreams' | 'submodules' | 'features' | 'releases' | 'hotfixes' | 'supports' | 'included' | 'excluded'>;
+export type ConfigParams = Pick<Config, 'identifier' | 'upstreams' | 'submodules' | 'features' | 'releases' | 'hotfixes' | 'supports' | 'included' | 'excluded'> & Partial<Pick<Config, 'featureMessageTemplate' | 'releaseMessageTemplate' | 'hotfixMessageTemplate' | 'releaseTagTemplate' | 'hotfixTagTemplate'>>;
 export class Config {
     public identifier: string;
     public upstreams: Array<{ name: string, url: string }>;
@@ -391,6 +391,11 @@ export class Config {
     public supports: Support[];
     public included: string[];
     public excluded: string[];
+    public featureMessageTemplate?: string;
+    public releaseMessageTemplate?: string;
+    public hotfixMessageTemplate?: string;
+    public releaseTagTemplate?: string;
+    public hotfixTagTemplate?: string;
 
     #initialized: boolean = false;
 
@@ -499,6 +504,11 @@ export class Config {
         this.supports = params.supports;
         this.included = params.included;
         this.excluded = params.excluded;
+        this.featureMessageTemplate = params.featureMessageTemplate;
+        this.releaseMessageTemplate = params.releaseMessageTemplate;
+        this.hotfixMessageTemplate = params.hotfixMessageTemplate;
+        this.releaseTagTemplate = params.releaseTagTemplate;
+        this.hotfixTagTemplate = params.hotfixTagTemplate;
     }
 
     // Register internals (initialize)
@@ -1312,12 +1322,11 @@ export class Submodule {
 export interface Submodule extends SubmoduleBase {}
 applyMixins(Submodule, [ SubmoduleBase ]);
 
-export type FeatureParams = Pick<Feature, 'name' | 'branchName' | 'sourceSha'> & Partial<Pick<Feature, 'sources'>>;
+export type FeatureParams = Pick<Feature, 'name' | 'branchName' | 'sourceSha'>;
 export class Feature {
     public name: string;
     public branchName: string;
     public sourceSha: string;
-    public sources: string[];
 
     #initialized: boolean = false;
 
@@ -1357,7 +1366,6 @@ export class Feature {
         this.name = params.name;
         this.branchName = params.branchName;
         this.sourceSha = params.sourceSha;
-        this.sources = params.sources ?? [];
     }
 
     public async register(parentConfig: Config, parentSupport?: Support) {
@@ -1385,34 +1393,19 @@ export class Feature {
         await exec(`git checkout ${this.branchName}`, { cwd: this.parentConfig?.path, stdout, dryRun });
     }
 
-    public resolveSources() {
-        if (this.sources.length <= 0)
-            return [ this.parentConfig ];
-
-        return this.sources.map(source => {
-            if (source === '.') {
-                return this.parentConfig;
-            }
-            else {
-                const support = this.parentConfig.supports.find(s => s.name === source);
-                if (!support)
-                    throw new Error(`Support ${source} not found`);
-
-                return support;
-            }
-        });
+    public resolveCommitMessageTemplate() {
+        return _.template(this.parentConfig.featureMessageTemplate ?? 'Feature <%= featureName %> Merged');
     }
 }
 
 export interface Feature extends FeatureBase {}
 applyMixins(Feature, [ FeatureBase ]);
 
-export type ReleaseParams = Pick<Release, 'name' | 'branchName' | 'sourceSha'> & Partial<Pick<Release, 'sources' | 'intermediate'>>;
+export type ReleaseParams = Pick<Release, 'name' | 'branchName' | 'sourceSha'> & Partial<Pick<Release,'intermediate'>>;
 export class Release {
     public name: string;
     public branchName: string;
     public sourceSha: string;
-    public sources: string[];
     public intermediate: boolean;
 
     #initialized: boolean = false;
@@ -1453,7 +1446,6 @@ export class Release {
         this.name = params.name;
         this.branchName = params.branchName;
         this.sourceSha = params.sourceSha;
-        this.sources = params.sources ?? [];
         this.intermediate = params.intermediate ?? false;
     }
 
@@ -1484,17 +1476,23 @@ export class Release {
             stdout?.write(Chalk.blue(`Branch ${this.branchName} created [${this.parentConfig.path}]\n`));
         }
     }
+
+    public resolveCommitMessageTemplate() {
+        return _.template(this.parentConfig.releaseMessageTemplate ?? '<% if (intermediate) { %>Release <%= releaseName %> Merged<% } else { %>Intermediate Release Merged<% } %>');
+    }
+    public resolveTagTemplate() {
+        return _.template(this.parentConfig.releaseTagTemplate ?? '<%= releaseName %>');
+    }
 }
 
 export interface Release extends ReleaseBase {}
 applyMixins(Release, [ ReleaseBase ]);
 
-export type HotfixParams = Pick<Hotfix, 'name' | 'branchName' | 'sourceSha'> & Partial<Pick<Hotfix, 'sources' | 'intermediate'>>;
+export type HotfixParams = Pick<Hotfix, 'name' | 'branchName' | 'sourceSha'> & Partial<Pick<Hotfix, 'intermediate'>>;
 export class Hotfix {
     public name: string;
     public branchName: string;
     public sourceSha: string;
-    public sources: string[];
     public intermediate: boolean;
 
     #initialized: boolean = false;
@@ -1535,7 +1533,6 @@ export class Hotfix {
         this.name = params.name;
         this.branchName = params.branchName;
         this.sourceSha = params.sourceSha;
-        this.sources = params.sources ?? [];
         this.intermediate = params.intermediate ?? false;
     }
 
@@ -1565,6 +1562,13 @@ export class Hotfix {
             await this.createBranch({ stdout, dryRun });
             stdout?.write(Chalk.blue(`Branch ${this.branchName} created [${this.parentConfig.path}]\n`));
         }
+    }
+
+    public resolveCommitMessageTemplate() {
+        return _.template(this.parentConfig.hotfixMessageTemplate ?? '<% if (intermediate) { %>Hotfix <%= hotfixName %> Merged<% } else { %>Intermediate Hotfix Merged<% } %>');
+    }
+    public resolveTagTemplate() {
+        return _.template(this.parentConfig.hotfixTagTemplate ?? '<%= hotfixName %>');
     }
 }
 

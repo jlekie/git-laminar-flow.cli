@@ -328,7 +328,9 @@ export async function closeFeature(rootConfig: Config, { stdout, dryRun, ...para
         !dryRun && await config.setStateValue('activeClosingFeature', feature.uri);
 
         if (!params.abort({ config })) {
-            const commitMessage = `feature ${feature.name} merge`;
+            const commitMessage = feature.resolveCommitMessageTemplate()({
+                featureName: feature.name
+            });
 
             if (!await config.getStateValue([ feature.stateKey, 'closing', 'develop' ], 'boolean')) {
                 if (await config.isDirty({ stdout }))
@@ -392,9 +394,14 @@ export async function closeRelease(rootConfig: Config, { stdout, dryRun, ...para
         !dryRun && await config.setStateValue('activeClosingFeature', release.uri);
 
         if (!params.abort({ config })) {
-            const commitMessage = release.intermediate
-                ? 'intermediate release merge'
-                : `release ${release.name} merge`;
+            const commitMessage = release.resolveCommitMessageTemplate()({
+                releaseName: release.name,
+                intermediate: release.intermediate
+            });
+            const tag = release.resolveTagTemplate()({
+                releaseName: release.name,
+                intermediate: release.intermediate
+            });
 
             if (!await config.getStateValue([ release.stateKey, 'closing', 'develop' ], 'boolean')) {
                 if (await config.isDirty({ stdout }))
@@ -445,7 +452,7 @@ export async function closeRelease(rootConfig: Config, { stdout, dryRun, ...para
                     await config.commit(commitMessage, { stdout, dryRun });
 
                 if (!release.intermediate)
-                    await config.tag(release.name, { annotation: `Release ${release.name}`, stdout, dryRun })
+                    await config.tag(tag, { annotation: `Release ${release.name}`, stdout, dryRun })
 
                 !dryRun && await config.setStateValue([ release.stateKey, 'closing', 'master' ], true);
             }
