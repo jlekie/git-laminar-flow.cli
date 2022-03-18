@@ -39,8 +39,12 @@ export class InitCommand extends BaseCommand {
             excluded: this.exclude
         });
 
-        for (const config of targetConfigs)
-            await config.init({ stdout: this.context.stdout, dryRun: this.dryRun });
+        await Bluebird.map(targetConfigs, config => config.init({ stdout: this.context.stdout, dryRun: this.dryRun }), {
+            concurrency: 5
+        });
+
+        // for (const config of targetConfigs)
+        //     await config.init({ stdout: this.context.stdout, dryRun: this.dryRun });
     }
 }
 
@@ -66,6 +70,9 @@ export class CheckoutCommand extends BaseCommand {
         const [ type, target ] = this.target.split('://');
 
         for (const config of targetConfigs) {
+            if (!await config.hasElement(this.target))
+                continue;
+
             const fromElement = await config.parseElement(this.target);
             const fromBranch = await (async () => {
                 if (fromElement.type === 'branch')

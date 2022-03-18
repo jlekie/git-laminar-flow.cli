@@ -68,6 +68,15 @@ export class CreateInteractiveCommand extends BaseCommand {
                 type: 'confirm',
                 message: `[${Chalk.magenta(config.pathspec)}] Checkout`,
             }),
+            upstream: ({ config }) => this.prompt('upstream', Zod.string().nullable().transform(v => v ?? undefined), {
+                type: 'select',
+                message: `[${Chalk.magenta(config.pathspec)}] Upstream`,
+                choices: [
+                    { title: 'N/A', value: null },
+                    ...config.upstreams.map(u => ({ title: u.name, value: u.name }))
+                ],
+                initial: config.upstreams.length > 0 ? 1 : 0
+            }),
             stdout: this.context.stdout,
             dryRun: this.dryRun
         });

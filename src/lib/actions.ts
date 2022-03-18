@@ -47,7 +47,8 @@ export async function createFeature(rootConfig: Config, { stdout, dryRun, ...par
     configs: ActionParam<Config[], { configs: Config[] }>;
     from?: ActionParam<string, { config: Config, activeSupport?: string }>;
     branchName: ActionParam<string, { config: Config, fromElement: Element, featureName: string }>;
-    checkout?: ActionParam<boolean, { config: Config }>
+    checkout?: ActionParam<boolean, { config: Config }>;
+    upstream?: ActionParam<string | undefined, { config: Config }>;
 }>) {
     const featureName = await params.name();
 
@@ -70,7 +71,8 @@ export async function createFeature(rootConfig: Config, { stdout, dryRun, ...par
         const feature = new Feature({
             name: featureName,
             branchName,
-            sourceSha: await config.resolveCommitSha(fromBranch)
+            sourceSha: await config.resolveCommitSha(fromBranch),
+            upstream: await params.upstream?.({ config })
         });
         source.features.push(feature);
         await feature.register(config, source instanceof Support ? source : undefined);
@@ -89,6 +91,7 @@ export async function createRelease(rootConfig: Config, { stdout, dryRun, ...par
     branchName: ActionParam<string, { config: Config, fromElement: Element, releaseName: string }>;
     checkout?: ActionParam<boolean, { config: Config }>;
     intermediate?: ActionParam<boolean | undefined, { config: Config }>;
+    upstream?: ActionParam<string | undefined, { config: Config }>;
 }>) {
     const releaseName = await params.name();
 
@@ -112,6 +115,7 @@ export async function createRelease(rootConfig: Config, { stdout, dryRun, ...par
             name: releaseName,
             branchName,
             sourceSha: await config.resolveCommitSha(fromBranch),
+            upstream: await params.upstream?.({ config }),
             intermediate: await params.intermediate?.({ config })
         });
         source.releases.push(release);
@@ -131,6 +135,7 @@ export async function createHotfix(rootConfig: Config, { stdout, dryRun, ...para
     branchName: ActionParam<string, { config: Config, fromElement: Element, hotfixName: string }>;
     checkout?: ActionParam<boolean, { config: Config }>;
     intermediate?: ActionParam<boolean | undefined, { config: Config }>;
+    upstream?: ActionParam<string | undefined, { config: Config }>;
 }>) {
     const hotfixName = await params.name();
 
@@ -154,6 +159,7 @@ export async function createHotfix(rootConfig: Config, { stdout, dryRun, ...para
             name: hotfixName,
             branchName,
             sourceSha: await config.resolveCommitSha(fromBranch),
+            upstream: await params.upstream?.({ config }),
             intermediate: await params.intermediate?.({ config })
         });
         source.hotfixes.push(hotfix);
@@ -173,7 +179,8 @@ export async function createSupport(rootConfig: Config, { stdout, dryRun, ...par
     masterBranchName: ActionParam<string, { config: Config, supportName: string }>;
     developBranchName: ActionParam<string, { config: Config, supportName: string }>;
     checkout?: ActionParam<'master' | 'develop' | null | undefined, { config: Config }>;
-    activate?: ActionParam<boolean, { config: Config }>
+    activate?: ActionParam<boolean, { config: Config }>;
+    upstream?: ActionParam<string | undefined, { config: Config }>;
 }>) {
     const supportName = await params.name();
 
@@ -196,6 +203,7 @@ export async function createSupport(rootConfig: Config, { stdout, dryRun, ...par
             masterBranchName,
             developBranchName,
             sourceSha: await config.resolveCommitSha(fromBranch),
+            upstream: await params.upstream?.({ config }),
             features: [],
             releases: [],
             hotfixes: []
@@ -466,6 +474,30 @@ export async function closeRelease(rootConfig: Config, { stdout, dryRun, ...para
 
         if (!dryRun)
             await (release.parentSupport ?? release.parentConfig).deleteRelease(release);
+
+        await config.save({ stdout: stdout, dryRun: dryRun });
+    }
+}
+
+export async function syncFeature(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
+    name: ActionParam<string>;
+    configs: ActionParam<Config[], { configs: Config[] }>;
+}>) {
+    const featureName = await params.name();
+
+    const allConfigs = await Bluebird.filter(rootConfig.flattenConfigs(), c => c.hasElement(`feature://${featureName}`));
+    if (!allConfigs.length)
+        return;
+    
+    const configs = await params.configs({ configs: allConfigs });
+    for (const config of configs) {
+        const { feature } = await config.findElement('feature', featureName);
+
+        if (await config.branchExists(feature.branchName, { stdout, dryRun }))
+            await config.deleteBranch(feature.branchName, { stdout, dryRun });
+
+        if (!dryRun)
+            await (feature.parentSupport ?? feature.parentConfig).deleteFeature(feature);
 
         await config.save({ stdout: stdout, dryRun: dryRun });
     }
