@@ -11,8 +11,8 @@ import * as Prompts from 'prompts';
 
 import { BaseCommand } from './common';
 
-import { loadV2Config, Config, Release, Support } from '../lib/config';
-import { createSupport } from '../lib/actions';
+import { loadV2Config, Config, Release, Support } from 'lib/config';
+import { createSupport, deleteSupport } from 'lib/actions';
 
 export class CreateInteractiveCommand extends BaseCommand {
     static paths = [['support', 'create']];
@@ -72,14 +72,18 @@ export class CreateInteractiveCommand extends BaseCommand {
                 message: 'Select Modules',
                 choices: configs.map(c => ({ title: c.pathspec, value: c.identifier, selected: targetConfigs.some(tc => tc.identifier === c.identifier) }))
             }),
-            checkout: () => this.prompt('checkout', Zod.union([ Zod.literal('master'), Zod.literal('develop') ]).nullable().optional(), {
+            checkout: ({ config }) => this.prompt('checkout', Zod.union([ Zod.literal('master'), Zod.literal('develop') ]).nullable().optional(), {
                 type: 'select',
-                message: 'Checkout',
+                message: `[${Chalk.magenta(config.pathspec)}] Checkout`,
                 choices: [
                     { title: 'N/A', value: null },
                     { title: 'Master', value: 'master' },
                     { title: 'Develop', value: 'develop' }
                 ]
+            }),
+            activate: ({ config }) => this.prompt('activate', Zod.boolean(), {
+                type: 'confirm',
+                message: `[${Chalk.magenta(config.pathspec)}] Activate`
             }),
             stdout: this.context.stdout,
             dryRun: this.dryRun
@@ -118,6 +122,35 @@ export class CreateCommand extends BaseCommand {
             developBranchName: ({ supportName }) => this.developBranchName ?? `support/${supportName}/develop`,
             configs: () => targetConfigs,
             checkout: () => this.checkout,
+            stdout: this.context.stdout,
+            dryRun: this.dryRun
+        });
+    }
+}
+
+export class DeleteCommand extends BaseCommand {
+    static paths = [['support', 'delete']];
+
+    supportName = Option.Rest({ required: 1 });
+
+    include = Option.Array('--include');
+    exclude = Option.Array('--exclude');
+
+    static usage = Command.Usage({
+        description: 'Delete support',
+        category: 'Support'
+    });
+
+    public async execute() {
+        const rootConfig = await this.loadConfig();
+        const targetConfigs = await rootConfig.resolveFilteredConfigs({
+            included: this.include,
+            excluded: this.exclude
+        });
+
+        await deleteSupport(rootConfig, {
+            name: async () => this.supportName[0],
+            configs: () => targetConfigs,
             stdout: this.context.stdout,
             dryRun: this.dryRun
         });

@@ -16,8 +16,8 @@ import { parseElementUri } from '@jlekie/git-laminar-flow';
 
 import { BaseCommand } from './common';
 
-import { loadV2Config, Config, Feature, StateProxy, Support } from '../lib/config';
-import { loadState } from '../lib/state';
+import { loadV2Config, Config, Feature, StateProxy, Support } from 'lib/config';
+import { loadState } from 'lib/state';
 
 export class InitCommand extends BaseCommand {
     static paths = [['init']];
@@ -556,9 +556,9 @@ export class ListCommand extends BaseCommand {
 
             if (config.releases.length) {
                 const releaseTable = new Table({
-                    head: ['Name', 'Branch Name', 'Source SHA']
+                    head: ['Name', 'Branch Name', 'Source SHA', 'Intermediate']
                 });
-                releaseTable.push(...config.releases.map(i => [ i.name, i.branchName, i.sourceSha ]));
+                releaseTable.push(...config.releases.map(i => [ i.name, i.branchName, i.sourceSha, i.intermediate ]));
 
                 table.push({ 'Releases': releaseTable.toString() });
             }
@@ -568,9 +568,9 @@ export class ListCommand extends BaseCommand {
 
             if (config.hotfixes.length) {
                 const hotfixTable = new Table({
-                    head: ['Name', 'Branch Name', 'Source SHA']
+                    head: ['Name', 'Branch Name', 'Source SHA', 'Intermediate']
                 });
-                hotfixTable.push(...config.hotfixes.map(i => [ i.name, i.branchName, i.sourceSha ]));
+                hotfixTable.push(...config.hotfixes.map(i => [ i.name, i.branchName, i.sourceSha, i.intermediate ]));
 
                 table.push({ 'Hotfixes': hotfixTable.toString() });
             }
@@ -579,12 +579,51 @@ export class ListCommand extends BaseCommand {
             }
 
             if (config.supports.length) {
-                const supportTable = new Table({
-                    head: ['Name', 'Master Branch Name', 'Develop Branch Name', 'Source SHA']
-                });
-                supportTable.push(...config.supports.map(i => [ i.name, i.masterBranchName, i.developBranchName, i.sourceSha ]));
+                // const supportTable = new Table({
+                //     // head: ['Name', 'Master Branch Name', 'Develop Branch Name', 'Source SHA']
+                // });
+                // supportTable.push(...config.supports.map(i => [ i.name, i.masterBranchName, i.developBranchName, i.sourceSha ]));
 
-                table.push({ 'Supports': supportTable.toString() });
+                const tmp = config.supports.map(support => {
+                    const supportTable = new Table();
+                    supportTable.push(
+                        { 'Name': support.name },
+                        { 'Master Branch': support.masterBranchName },
+                        { 'Develop Branch': support.developBranchName },
+                        { 'Source SHA': support.sourceSha }
+                    );
+
+                    if (support.features.length) {
+                        const featureTable = new Table({
+                            head: ['Name', 'Branch Name', 'Source SHA']
+                        });
+                        featureTable.push(...support.features.map(i => [ i.name, i.branchName, i.sourceSha ]));
+        
+                        supportTable.push({ 'Features': featureTable.toString() });
+                    }
+        
+                    if (support.releases.length) {
+                        const releaseTable = new Table({
+                            head: ['Name', 'Branch Name', 'Source SHA', 'Intermediate']
+                        });
+                        releaseTable.push(...support.releases.map(i => [ i.name, i.branchName, i.sourceSha, i.intermediate ]));
+        
+                        supportTable.push({ 'Releases': releaseTable.toString() });
+                    }
+        
+                    if (support.hotfixes.length) {
+                        const hotfixTable = new Table({
+                            head: ['Name', 'Branch Name', 'Source SHA', 'Intermediate']
+                        });
+                        hotfixTable.push(...support.hotfixes.map(i => [ i.name, i.branchName, i.sourceSha, i.intermediate ]));
+        
+                        supportTable.push({ 'Hotfixes': hotfixTable.toString() });
+                    }
+
+                    return supportTable.toString();
+                }).join('\n');
+
+                table.push({ 'Supports': tmp });
             }
             else {
                 table.push({ 'Supports': 'None' });
@@ -659,5 +698,23 @@ export class CreateCommand extends BaseCommand {
             if (this.checkout)
                 await config.checkoutBranch(feature.branchName, { stdout: this.context.stdout, dryRun: this.dryRun });
         }
+    }
+}
+
+export class ResetStateCommand extends BaseCommand {
+    static paths = [['state', 'reset']];
+
+    include = Option.Array('--include');
+    exclude = Option.Array('--exclude');
+
+    public async execute() {
+        const config = await this.loadConfig();
+        const targetConfigs = await config.resolveFilteredConfigs({
+            included: this.include,
+            excluded: this.exclude
+        });
+
+        for (const config of targetConfigs)
+            await config.saveState({});
     }
 }

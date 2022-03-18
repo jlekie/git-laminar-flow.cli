@@ -1,9 +1,13 @@
 import * as _ from 'lodash';
+import * as Bluebird from 'bluebird';
 import * as Stream from 'stream';
+
+import * as Path from 'path';
+import * as FS from 'fs-extra';
 
 import * as Chalk from 'chalk';
 
-import { Config, Feature, Release, Hotfix, Support, Element } from './config';
+import { Config, Feature, Release, Hotfix, Support, Element } from 'lib/config';
 
 export interface CommonParams {
     stdout?: Stream.Writable;
@@ -16,12 +20,34 @@ export type ActionParams<T> = CommonParams & {
         : T[K] extends ActionParam<infer RT, infer PT> ? ActionParam<RT, PT> : () => T[K] | Promise<T[K]>
 }
 
+async function resolveFromArtifacts(config: Config, from: string) {
+    const fromElement = await config.parseElement(from);
+    const fromBranch = await (async () => {
+        if (fromElement.type === 'branch')
+            return fromElement.branch;
+        else if (fromElement.type === 'repo')
+            return fromElement.config.resolveCurrentBranch();
+        else if (fromElement.type === 'feature')
+            return fromElement.feature.branchName;
+        else if (fromElement.type === 'release')
+            return fromElement.release.branchName;
+        else if (fromElement.type === 'hotfix')
+            return fromElement.hotfix.branchName;
+        else if (fromElement.type === 'support')
+            return fromElement.targetBranch === 'master' ? fromElement.support.masterBranchName : fromElement.support.developBranchName;
+        else
+            throw new Error(`Cannot derive source branch from ${from}`);
+    })();
+
+    return [ fromElement, fromBranch ] as const;
+}
+
 export async function createFeature(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
     name: ActionParam<string>;
     configs: ActionParam<Config[], { configs: Config[] }>;
-    from?: ActionParam<string, { config: Config }>;
+    from?: ActionParam<string, { config: Config, activeSupport?: string }>;
     branchName: ActionParam<string, { config: Config, fromElement: Element, featureName: string }>;
-    checkout?: ActionParam<boolean>
+    checkout?: ActionParam<boolean, { config: Config }>
 }>) {
     const featureName = await params.name();
 
@@ -33,24 +59,10 @@ export async function createFeature(rootConfig: Config, { stdout, dryRun, ...par
             continue;
         }
 
-        const from = await params.from?.({ config }) ?? 'branch://develop';
-        const fromElement = await config.parseElement(from);
-        const fromBranch = await (async () => {
-            if (fromElement.type === 'branch')
-                return fromElement.branch;
-            else if (fromElement.type === 'repo')
-                return fromElement.config.resolveCurrentBranch();
-            else if (fromElement.type === 'feature')
-                return fromElement.feature.branchName;
-            else if (fromElement.type === 'release')
-                return fromElement.release.branchName;
-            else if (fromElement.type === 'hotfix')
-                return fromElement.hotfix.branchName;
-            else if (fromElement.type === 'support')
-                return fromElement.support.developBranchName;
-            else
-                throw new Error(`Cannot derive source branch from ${from}`);
-        })();
+        const activeSupport = await config.getStateValue('activeSupport', 'string');
+
+        const from = await params.from?.({ config, activeSupport }) ?? 'branch://develop';
+        const [ fromElement, fromBranch ] = await resolveFromArtifacts(config, from);
 
         const branchName = await params.branchName({ config, fromElement, featureName });
         const source = fromElement.type === 'support' ? fromElement.support : config;
@@ -66,17 +78,17 @@ export async function createFeature(rootConfig: Config, { stdout, dryRun, ...par
         await feature.init({ stdout: stdout, dryRun: dryRun });
         await config.save({ stdout: stdout, dryRun: dryRun });
 
-        if (await params.checkout?.())
+        if (await params.checkout?.({ config }))
             await config.checkoutBranch(feature.branchName, { stdout: stdout, dryRun: dryRun });
     }
 }
-
 export async function createRelease(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
     name: ActionParam<string>;
     configs: ActionParam<Config[], { configs: Config[] }>;
-    from?: ActionParam<string, { config: Config }>;
+    from?: ActionParam<string, { config: Config, activeSupport?: string }>;
     branchName: ActionParam<string, { config: Config, fromElement: Element, releaseName: string }>;
-    checkout?: ActionParam<boolean>
+    checkout?: ActionParam<boolean, { config: Config }>;
+    intermediate?: ActionParam<boolean | undefined, { config: Config }>;
 }>) {
     const releaseName = await params.name();
 
@@ -88,24 +100,10 @@ export async function createRelease(rootConfig: Config, { stdout, dryRun, ...par
             continue;
         }
 
-        const from = await params.from?.({ config }) ?? 'branch://develop';
-        const fromElement = await config.parseElement(from);
-        const fromBranch = await (async () => {
-            if (fromElement.type === 'branch')
-                return fromElement.branch;
-            else if (fromElement.type === 'repo')
-                return fromElement.config.resolveCurrentBranch();
-            else if (fromElement.type === 'feature')
-                return fromElement.feature.branchName;
-            else if (fromElement.type === 'release')
-                return fromElement.release.branchName;
-            else if (fromElement.type === 'hotfix')
-                return fromElement.hotfix.branchName;
-            else if (fromElement.type === 'support')
-                return fromElement.support.developBranchName;
-            else
-                throw new Error(`Cannot derive source branch from ${from}`);
-        })();
+        const activeSupport = await config.getStateValue('activeSupport', 'string');
+
+        const from = await params.from?.({ config, activeSupport }) ?? 'branch://develop';
+        const [ fromElement, fromBranch ] = await resolveFromArtifacts(config, from);
 
         const branchName = await params.branchName({ config, fromElement, releaseName });
         const source = fromElement.type === 'support' ? fromElement.support : config;
@@ -113,7 +111,8 @@ export async function createRelease(rootConfig: Config, { stdout, dryRun, ...par
         const release = new Release({
             name: releaseName,
             branchName,
-            sourceSha: await config.resolveCommitSha(fromBranch)
+            sourceSha: await config.resolveCommitSha(fromBranch),
+            intermediate: await params.intermediate?.({ config })
         });
         source.releases.push(release);
         await release.register(config, source instanceof Support ? source : undefined);
@@ -121,17 +120,17 @@ export async function createRelease(rootConfig: Config, { stdout, dryRun, ...par
         await release.init({ stdout: stdout, dryRun: dryRun });
         await config.save({ stdout: stdout, dryRun: dryRun });
 
-        if (await params.checkout?.())
+        if (await params.checkout?.({ config }))
             await config.checkoutBranch(release.branchName, { stdout: stdout, dryRun: dryRun });
     }
 }
-
 export async function createHotfix(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
     name: ActionParam<string>;
     configs: ActionParam<Config[], { configs: Config[] }>;
-    from?: ActionParam<string, { config: Config }>;
+    from?: ActionParam<string, { config: Config, activeSupport?: string }>;
     branchName: ActionParam<string, { config: Config, fromElement: Element, hotfixName: string }>;
-    checkout?: ActionParam<boolean>
+    checkout?: ActionParam<boolean, { config: Config }>;
+    intermediate?: ActionParam<boolean | undefined, { config: Config }>;
 }>) {
     const hotfixName = await params.name();
 
@@ -143,24 +142,10 @@ export async function createHotfix(rootConfig: Config, { stdout, dryRun, ...para
             continue;
         }
 
-        const from = await params.from?.({ config }) ?? 'branch://develop';
-        const fromElement = await config.parseElement(from);
-        const fromBranch = await (async () => {
-            if (fromElement.type === 'branch')
-                return fromElement.branch;
-            else if (fromElement.type === 'repo')
-                return fromElement.config.resolveCurrentBranch();
-            else if (fromElement.type === 'feature')
-                return fromElement.feature.branchName;
-            else if (fromElement.type === 'release')
-                return fromElement.release.branchName;
-            else if (fromElement.type === 'hotfix')
-                return fromElement.hotfix.branchName;
-            else if (fromElement.type === 'support')
-                return fromElement.support.developBranchName;
-            else
-                throw new Error(`Cannot derive source branch from ${from}`);
-        })();
+        const activeSupport = await config.getStateValue('activeSupport', 'string');
+
+        const from = await params.from?.({ config, activeSupport }) ?? 'branch://develop';
+        const [ fromElement, fromBranch ] = await resolveFromArtifacts(config, from);
 
         const branchName = await params.branchName({ config, fromElement, hotfixName });
         const source = fromElement.type === 'support' ? fromElement.support : config;
@@ -168,7 +153,8 @@ export async function createHotfix(rootConfig: Config, { stdout, dryRun, ...para
         const hotfix = new Hotfix({
             name: hotfixName,
             branchName,
-            sourceSha: await config.resolveCommitSha(fromBranch)
+            sourceSha: await config.resolveCommitSha(fromBranch),
+            intermediate: await params.intermediate?.({ config })
         });
         source.hotfixes.push(hotfix);
         await hotfix.register(config, source instanceof Support ? source : undefined);
@@ -176,18 +162,18 @@ export async function createHotfix(rootConfig: Config, { stdout, dryRun, ...para
         await hotfix.init({ stdout: stdout, dryRun: dryRun });
         await config.save({ stdout: stdout, dryRun: dryRun });
 
-        if (await params.checkout?.())
+        if (await params.checkout?.({ config }))
             await config.checkoutBranch(hotfix.branchName, { stdout: stdout, dryRun: dryRun });
     }
 }
-
 export async function createSupport(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
     name: ActionParam<string>;
     configs: ActionParam<Config[], { configs: Config[] }>;
     from?: ActionParam<string, { config: Config }>;
     masterBranchName: ActionParam<string, { config: Config, supportName: string }>;
     developBranchName: ActionParam<string, { config: Config, supportName: string }>;
-    checkout?: ActionParam<'master' | 'develop' | null | undefined>
+    checkout?: ActionParam<'master' | 'develop' | null | undefined, { config: Config }>;
+    activate?: ActionParam<boolean, { config: Config }>
 }>) {
     const supportName = await params.name();
 
@@ -200,23 +186,7 @@ export async function createSupport(rootConfig: Config, { stdout, dryRun, ...par
         }
 
         const from = await params.from?.({ config }) ?? 'branch://master';
-        const fromElement = await config.parseElement(from);
-        const fromBranch = await (async () => {
-            if (fromElement.type === 'branch')
-                return fromElement.branch;
-            else if (fromElement.type === 'repo')
-                return fromElement.config.resolveCurrentBranch();
-            else if (fromElement.type === 'feature')
-                return fromElement.feature.branchName;
-            else if (fromElement.type === 'release')
-                return fromElement.release.branchName;
-            else if (fromElement.type === 'hotfix')
-                return fromElement.hotfix.branchName;
-            else if (fromElement.type === 'support')
-                return fromElement.support.developBranchName;
-            else
-                throw new Error(`Cannot derive source branch from ${from}`);
-        })();
+        const [ fromElement, fromBranch ] = await resolveFromArtifacts(config, from);
 
         const masterBranchName = await params.masterBranchName({ config, supportName });
         const developBranchName = await params.developBranchName({ config, supportName });
@@ -236,10 +206,260 @@ export async function createSupport(rootConfig: Config, { stdout, dryRun, ...par
         await support.init({ stdout: stdout, dryRun: dryRun });
         await config.save({ stdout: stdout, dryRun: dryRun });
 
-        const checkout = await params.checkout?.();
+        const checkout = await params.checkout?.({ config });
         if (checkout === 'develop')
             await config.checkoutBranch(support.developBranchName, { stdout: stdout, dryRun: dryRun });
         else if (checkout === 'master')
             await config.checkoutBranch(support.masterBranchName, { stdout: stdout, dryRun: dryRun });
+
+        if (await params.activate?.({ config}))
+            await config.setStateValue('activeSupport', supportName);
+    }
+}
+
+export async function deleteFeature(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
+    name: ActionParam<string>;
+    configs: ActionParam<Config[], { configs: Config[] }>;
+}>) {
+    const featureName = await params.name();
+
+    const allConfigs = await Bluebird.filter(rootConfig.flattenConfigs(), c => c.hasElement(`feature://${featureName}`));
+    if (!allConfigs.length)
+        return;
+    
+    const configs = await params.configs({ configs: allConfigs });
+    for (const config of configs) {
+        const { feature } = await config.findElement('feature', featureName);
+
+        if (await config.branchExists(feature.branchName, { stdout, dryRun }))
+            await config.deleteBranch(feature.branchName, { stdout, dryRun });
+
+        if (!dryRun)
+            await (feature.parentSupport ?? feature.parentConfig).deleteFeature(feature);
+
+        await config.save({ stdout: stdout, dryRun: dryRun });
+    }
+}
+export async function deleteRelease(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
+    name: ActionParam<string>;
+    configs: ActionParam<Config[], { configs: Config[] }>;
+}>) {
+    const releaseName = await params.name();
+
+    const allConfigs = await Bluebird.filter(rootConfig.flattenConfigs(), c => c.hasElement(`release://${releaseName}`));
+    if (!allConfigs.length)
+        return;
+
+    const configs = await params.configs({ configs: allConfigs });
+    for (const config of configs) {
+        const { release } = await config.findElement('release', releaseName);
+
+        if (await config.branchExists(release.branchName, { stdout, dryRun }))
+            await config.deleteBranch(release.branchName, { stdout, dryRun });
+
+        if (!dryRun)
+            await (release.parentSupport ?? release.parentConfig).deleteRelease(release);
+
+        await config.save({ stdout: stdout, dryRun: dryRun });
+    }
+}
+export async function deleteHotfix(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
+    name: ActionParam<string>;
+    configs: ActionParam<Config[], { configs: Config[] }>;
+}>) {
+    const hotfixName = await params.name();
+
+    const allConfigs = rootConfig.flattenConfigs();
+    const configs = await params.configs({ configs: allConfigs });
+    for (const config of configs) {
+        const { hotfix } = await config.findElement('hotfix', hotfixName);
+
+        if (await config.branchExists(hotfix.branchName, { stdout, dryRun }))
+            await config.deleteBranch(hotfix.branchName, { stdout, dryRun });
+
+        if (!dryRun)
+            await (hotfix.parentSupport ?? hotfix.parentConfig).deleteHotfix(hotfix);
+
+        await config.save({ stdout: stdout, dryRun: dryRun });
+    }
+}
+export async function deleteSupport(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
+    name: ActionParam<string>;
+    configs: ActionParam<Config[], { configs: Config[] }>;
+}>) {
+    const supportName = await params.name();
+
+    const allConfigs = rootConfig.flattenConfigs();
+    const configs = await params.configs({ configs: allConfigs });
+    for (const config of configs) {
+        const { support } = await config.findElement('support', supportName);
+
+        if (await config.branchExists(support.masterBranchName, { stdout, dryRun }))
+            await config.deleteBranch(support.masterBranchName, { stdout, dryRun });
+
+        if (await config.branchExists(support.developBranchName, { stdout, dryRun }))
+            await config.deleteBranch(support.developBranchName, { stdout, dryRun });
+
+        if (!dryRun)
+            await config.deleteSupport(support);
+
+        await config.save({ stdout: stdout, dryRun: dryRun });
+    }
+}
+
+export async function closeFeature(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
+    name: ActionParam<string>;
+    configs: ActionParam<Config[], { configs: Config[] }>;
+    confirm?: ActionParam<boolean, { config: Config, message: string }>;
+    abort: ActionParam<boolean, { config: Config }>;
+    deleteLocalBranch?: ActionParam<boolean, { config: Config }>;
+    deleteRemoteBranch?: ActionParam<boolean, { config: Config }>;
+}>) {
+    const featureName = await params.name();
+
+    const allConfigs = await Bluebird.filter(rootConfig.flattenConfigs(), c => c.hasElement(`feature://${featureName}`));
+    if (!allConfigs.length)
+        return;
+
+    const configs = await params.configs({ configs: allConfigs });
+    for (const config of configs) {
+        const { feature } = await config.findElement('feature', featureName);
+
+        !dryRun && await config.setStateValue('activeClosingFeature', feature.uri);
+
+        if (!params.abort({ config })) {
+            const commitMessage = `feature ${feature.name} merge`;
+
+            if (!await config.getStateValue([ feature.stateKey, 'closing', 'develop' ], 'boolean')) {
+                if (await config.isDirty({ stdout }))
+                    throw new Error(`Cannot merge, please commit all outstanding changes`);
+
+                await config.checkoutBranch(feature.parentSupport?.developBranchName ?? 'develop', { stdout, dryRun });
+                if (await config.isDirty({ stdout }))
+                    throw new Error(`Cannot merge, develop has uncommited or staged changes`);
+
+                await config.merge(feature.branchName, { squash: true, stdout, dryRun }).catch(async err => {
+                    if (await FS.pathExists(Path.join(config.path, '.git/SQUASH_MSG')))
+                        await FS.writeFile(Path.join(config.path, '.git/SQUASH_MSG'), commitMessage);
+
+                    if (params.confirm) {
+                        while (await config.isMergeInProgress({ stdout }))
+                            await params.confirm?.({ config, message: 'Continue with merge' });
+                    }
+                    else {
+                        throw new Error(`Could not merge changes; ${err}`);
+                    }
+                });
+
+                if (await config.hasStagedChanges({ stdout, dryRun }))
+                    await config.commit(commitMessage, { stdout, dryRun });
+
+                !dryRun && await config.setStateValue([ feature.stateKey, 'closing', 'develop' ], true);
+            }
+        }
+
+        if (await config.branchExists(feature.branchName, { stdout, dryRun }) && await params.deleteLocalBranch?.({ config }))
+            await config.deleteBranch(feature.branchName, { stdout, dryRun });
+
+        if (await config.remoteBranchExists(feature.branchName, 'origin', { stdout, dryRun }) && await params.deleteRemoteBranch?.({ config }))
+            await config.deleteRemoteBranch(feature.branchName, 'origin', { stdout, dryRun });
+
+        if (!dryRun)
+            await (feature.parentSupport ?? feature.parentConfig).deleteFeature(feature);
+
+        await config.save({ stdout: stdout, dryRun: dryRun });
+    }
+}
+
+export async function closeRelease(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
+    name: ActionParam<string>;
+    configs: ActionParam<Config[], { configs: Config[] }>;
+    confirm?: ActionParam<boolean, { config: Config, message: string }>;
+    abort: ActionParam<boolean, { config: Config }>;
+    deleteLocalBranch?: ActionParam<boolean, { config: Config }>;
+    deleteRemoteBranch?: ActionParam<boolean, { config: Config }>;
+}>) {
+    const releaseName = await params.name();
+
+    const allConfigs = await Bluebird.filter(rootConfig.flattenConfigs(), c => c.hasElement(`release://${releaseName}`));
+    if (!allConfigs.length)
+        return;
+
+    const configs = await params.configs({ configs: allConfigs });
+    for (const config of configs) {
+        const { release } = await config.findElement('release', releaseName);
+
+        !dryRun && await config.setStateValue('activeClosingFeature', release.uri);
+
+        if (!params.abort({ config })) {
+            const commitMessage = release.intermediate
+                ? 'intermediate release merge'
+                : `release ${release.name} merge`;
+
+            if (!await config.getStateValue([ release.stateKey, 'closing', 'develop' ], 'boolean')) {
+                if (await config.isDirty({ stdout }))
+                    throw new Error(`Cannot merge, please commit all outstanding changes`);
+
+                await config.checkoutBranch(release.parentSupport?.developBranchName ?? 'develop', { stdout, dryRun });
+                if (await config.isDirty({ stdout }))
+                    throw new Error(`Cannot merge, develop has uncommited or staged changes`);
+
+                await config.merge(release.branchName, { squash: true, stdout, dryRun }).catch(async err => {
+                    if (await FS.pathExists(Path.join(config.path, '.git/SQUASH_MSG')))
+                        await FS.writeFile(Path.join(config.path, '.git/SQUASH_MSG'), commitMessage);
+
+                    if (params.confirm) {
+                        while (await config.isMergeInProgress({ stdout }))
+                            await params.confirm?.({ config, message: 'Continue with merge' });
+                    }
+                    else {
+                        throw new Error(`Could not merge changes; ${err}`);
+                    }
+                });
+
+                if (await config.hasStagedChanges({ stdout, dryRun }))
+                    await config.commit(commitMessage, { stdout, dryRun });
+
+                !dryRun && await config.setStateValue([ release.stateKey, 'closing', 'develop' ], true);
+            }
+
+            if (!await config.getStateValue([ release.stateKey, 'closing', 'master' ], 'boolean')) {
+                await config.checkoutBranch(release.parentSupport?.masterBranchName ?? 'master', { stdout, dryRun });
+                if (await config.isDirty({ stdout }))
+                    throw new Error(`Cannot merge, master has uncommited or staged changes`);
+
+                await config.merge(release.branchName, { squash: true, stdout, dryRun }).catch(async err => {
+                    if (await FS.pathExists(Path.join(config.path, '.git/SQUASH_MSG')))
+                        await FS.writeFile(Path.join(config.path, '.git/SQUASH_MSG'), commitMessage);
+
+                    if (params.confirm) {
+                        while (await config.isMergeInProgress({ stdout }))
+                            await params.confirm?.({ config, message: 'Continue with merge' });
+                    }
+                    else {
+                        throw new Error(`Could not merge changes; ${err}`);
+                    }
+                });
+
+                if (await config.hasStagedChanges({ stdout, dryRun }))
+                    await config.commit(commitMessage, { stdout, dryRun });
+
+                if (!release.intermediate)
+                    await config.tag(release.name, { annotation: `Release ${release.name}`, stdout, dryRun })
+
+                !dryRun && await config.setStateValue([ release.stateKey, 'closing', 'master' ], true);
+            }
+        }
+
+        if (await config.branchExists(release.branchName, { stdout, dryRun }) && await params.deleteLocalBranch?.({ config }))
+            await config.deleteBranch(release.branchName, { stdout, dryRun });
+
+        if (await config.remoteBranchExists(release.branchName, 'origin', { stdout, dryRun }) && await params.deleteRemoteBranch?.({ config }))
+            await config.deleteRemoteBranch(release.branchName, 'origin', { stdout, dryRun });
+
+        if (!dryRun)
+            await (release.parentSupport ?? release.parentConfig).deleteRelease(release);
+
+        await config.save({ stdout: stdout, dryRun: dryRun });
     }
 }

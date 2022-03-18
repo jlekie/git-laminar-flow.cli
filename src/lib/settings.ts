@@ -8,10 +8,12 @@ export const GlfsRepositorySchema = Zod.object({
     url: Zod.string().url()
 });
 export const SettingsSchema = Zod.object({
+    defaultGlfsRepository: Zod.string(),
     glfsRepositories: GlfsRepositorySchema.array().optional()
 });
 
 export class Settings {
+    public readonly defaultGlfsRepository: string;
     public readonly glfsRepositories: readonly GlfsRepository[];
 
     public static parse(value: unknown) {
@@ -19,18 +21,29 @@ export class Settings {
     }
     public static fromSchema(value: Zod.infer<typeof SettingsSchema>) {
         return new Settings({
+            ...value,
             glfsRepositories: value.glfsRepositories?.map(i => GlfsRepository.parse(i)) ?? []
         });
     }
 
     public static createNew() {
         return new Settings({
+            defaultGlfsRepository: 'default',
             glfsRepositories: []
         });
     }
 
-    public constructor(params: Pick<Settings, 'glfsRepositories'>) {
+    public constructor(params: Pick<Settings, 'defaultGlfsRepository' | 'glfsRepositories'>) {
+        this.defaultGlfsRepository = params.defaultGlfsRepository;
         this.glfsRepositories = params.glfsRepositories;
+    }
+
+    public getDefaultRepo() {
+        const repo = this.glfsRepositories.find(r => r.name === this.defaultGlfsRepository);
+        if (!repo)
+            throw new Error(`Default repo ${this.defaultGlfsRepository} not defined`);
+
+        return repo;
     }
 
     public async save(path: string) {

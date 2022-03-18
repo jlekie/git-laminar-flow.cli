@@ -2,7 +2,7 @@ import { Command, Option } from 'clipanion';
 
 import { BaseCommand } from './common';
 
-import { loadV2Config } from '../lib/config';
+import { loadV2Config } from 'lib/config';
 
 export class CloneCommand extends BaseCommand {
     static paths = [['submodules', 'clone']];

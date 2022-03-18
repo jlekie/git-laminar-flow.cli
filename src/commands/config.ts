@@ -12,9 +12,9 @@ import * as Yaml from 'js-yaml';
 import * as Tmp from 'tmp-promise';
 
 import { BaseCommand } from './common';
-import { exec, execCmd, ExecOptions } from '../lib/exec';
+import { exec, execCmd, ExecOptions } from 'lib/exec';
 
-import { loadConfig, loadV2Config, Config, Release, Hotfix, Support } from '../lib/config';
+import { loadConfig, loadV2Config, Config, Release, Hotfix, Support } from 'lib/config';
 
 export class ImportCommand extends BaseCommand {
     static paths = [['config', 'import']];
@@ -77,7 +77,7 @@ export class EditCommand extends BaseCommand {
     exclude = Option.Array('--exclude');
 
     static usage = Command.Usage({
-        description: 'Import config',
+        description: 'Edit config',
         category: 'Config'
     });
 

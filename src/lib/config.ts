@@ -263,7 +263,10 @@ export async function loadV2Config(uri: string, settings: Settings, { cwd, paren
         }
         else if (configRef.type === 'glfs') {
             const hostUrl = (() => {
-                const matchedRepo = settings.glfsRepositories.find(r => r.name === configRef.hostname);
+                const matchedRepo = configRef.hostname
+                    ? settings.glfsRepositories.find(r => r.name === configRef.hostname)
+                    : settings.getDefaultRepo();
+
                 if (matchedRepo)
                     return matchedRepo.url;
                 else
@@ -375,6 +378,7 @@ export type Element = {
     support: Support;
     targetBranch?: 'master' | 'develop';
 };
+export type NarrowedElement<T, N> = T extends { type: N } ? T : never;
 
 export type ConfigParams = Pick<Config, 'identifier' | 'upstreams' | 'submodules' | 'features' | 'releases' | 'hotfixes' | 'supports' | 'included' | 'excluded'>;
 export class Config {
@@ -598,6 +602,19 @@ export class Config {
 
             return { type: 'unknown', branch: branchName }
         }
+    }
+
+    public async hasElement(uri: string) {
+        return this.parseElement(uri).then(() => true).catch(() => false);
+    }
+
+    public async findElement<T extends Element['type']>(type: T, path: string) {
+        const fromElement = await this.parseElement(`${type}://${path}`);
+
+        if (fromElement.type !== type)
+            throw new Error(`Element type mismatch [${fromElement.type} / ${type}]`);
+    
+        return fromElement as NarrowedElement<Element, T>;
     }
 
     public async parseElement(uri: string): Promise<Element> {
@@ -852,6 +869,14 @@ export class Config {
             }
         }
 
+        // Add upstreams if missing
+        for (const upstream of this.upstreams) {
+            if (!await this.upstreamExists(upstream.name, { stdout, dryRun })) {
+                await exec(`git remote add ${upstream.name} ${upstream.url}`, { cwd: this.path, stdout, dryRun });
+                await exec(`git fetch`, { cwd: this.path, stdout, dryRun });
+            }
+        }
+
         // Create master branch if missing
         if (!await this.branchExists('master', { stdout, dryRun })) {
             if (await this.remoteBranchExists('master', 'origin', { stdout, dryRun })) {
@@ -888,12 +913,6 @@ export class Config {
 
         //     await this.checkoutBranch(currentBranch, { stdout, dryRun });
         // }
-
-        // Add upstreams if missing
-        for (const upstream of this.upstreams) {
-            if (!await this.upstreamExists(upstream.name, { stdout, dryRun }))
-                await exec(`git remote add ${upstream.name} ${upstream.url}`, { cwd: this.path, stdout, dryRun });
-        }
 
         // // Add origin upstream if missing
         // if (this.parentSubmodule?.url && !await this.upstreamExists('origin', { stdout, dryRun }))
@@ -939,7 +958,7 @@ export class Config {
             await support.init({ stdout, dryRun });
 
         // Save updated config to disk
-        await this.saveV2({ stdout, dryRun });
+        await this.save({ stdout, dryRun });
     }
 
     public async deleteFeature(feature: Feature) {
@@ -965,6 +984,14 @@ export class Config {
 
         const idx = this.hotfixes.indexOf(hotfix);
         this.hotfixes.splice(idx, 1);
+    }
+    public async deleteSupport(support: Support) {
+        const state = await this.loadState();
+        delete state[support.stateKey];
+        await this.saveState(state);
+
+        const idx = this.supports.indexOf(support);
+        this.supports.splice(idx, 1);
     }
 
     // Save the config to disk
@@ -1047,7 +1074,10 @@ export class Config {
         }
         else if (configRef.type === 'glfs') {
             const hostUrl = (() => {
-                const matchedRepo = this.settings.glfsRepositories.find(r => r.name === configRef.hostname);
+                const matchedRepo = configRef.hostname
+                    ? this.settings.glfsRepositories.find(r => r.name === configRef.hostname)
+                    : this.settings.getDefaultRepo();
+
                 if (matchedRepo)
                     return matchedRepo.url;
                 else
@@ -1124,6 +1154,9 @@ export class Config {
     }
     public async deleteBranch(branchName: string, { stdout, dryRun }: ExecParams = {}) {
         await exec(`git branch -D ${branchName}`, { cwd: this.path, stdout, dryRun });
+    }
+    public async deleteRemoteBranch(branchName: string, upstreamName: string, { stdout, dryRun }: ExecParams = {}) {
+        await exec(`git push -d ${upstreamName} ${branchName}`, { cwd: this.path, stdout, dryRun });
     }
     public async branchExists(branchName: string, { stdout, dryRun }: ExecParams = {}) {
         return !!await execCmd(`git branch --list ${branchName}`, { cwd: this.path, stdout, dryRun });
@@ -1374,12 +1407,13 @@ export class Feature {
 export interface Feature extends FeatureBase {}
 applyMixins(Feature, [ FeatureBase ]);
 
-export type ReleaseParams = Pick<Release, 'name' | 'branchName' | 'sourceSha'> & Partial<Pick<Release, 'sources'>>;
+export type ReleaseParams = Pick<Release, 'name' | 'branchName' | 'sourceSha'> & Partial<Pick<Release, 'sources' | 'intermediate'>>;
 export class Release {
     public name: string;
     public branchName: string;
     public sourceSha: string;
     public sources: string[];
+    public intermediate: boolean;
 
     #initialized: boolean = false;
 
@@ -1420,6 +1454,7 @@ export class Release {
         this.branchName = params.branchName;
         this.sourceSha = params.sourceSha;
         this.sources = params.sources ?? [];
+        this.intermediate = params.intermediate ?? false;
     }
 
     public async register(parentConfig: Config, parentSupport?: Support) {
@@ -1454,12 +1489,13 @@ export class Release {
 export interface Release extends ReleaseBase {}
 applyMixins(Release, [ ReleaseBase ]);
 
-export type HotfixParams = Pick<Hotfix, 'name' | 'branchName' | 'sourceSha'> & Partial<Pick<Hotfix, 'sources'>>;
+export type HotfixParams = Pick<Hotfix, 'name' | 'branchName' | 'sourceSha'> & Partial<Pick<Hotfix, 'sources' | 'intermediate'>>;
 export class Hotfix {
     public name: string;
     public branchName: string;
     public sourceSha: string;
     public sources: string[];
+    public intermediate: boolean;
 
     #initialized: boolean = false;
 
@@ -1500,6 +1536,7 @@ export class Hotfix {
         this.branchName = params.branchName;
         this.sourceSha = params.sourceSha;
         this.sources = params.sources ?? [];
+        this.intermediate = params.intermediate ?? false;
     }
 
     public async register(parentConfig: Config, parentSupport?: Support) {

@@ -10,11 +10,11 @@ import * as Prompts from 'prompts';
 
 import { BaseCommand } from './common';
 
-import { loadV2Config, Config, Feature, Support } from '../lib/config';
-import { createFeature } from '../lib/actions';
+import { loadV2Config, Config, Feature, Support } from 'lib/config';
+import { closeFeature, createFeature, deleteFeature } from 'lib/actions';
 
 export class CreateInteractiveCommand extends BaseCommand {
-    static paths = [['feature', 'create']];
+    static paths = [['feature', 'create'], ['create', 'feature']];
 
     featureName = Option.String('--name');
     branchName = Option.String('--branch-name');
@@ -49,10 +49,10 @@ export class CreateInteractiveCommand extends BaseCommand {
                 type: 'text',
                 message: 'Feature Name'
             }),
-            from: ({ config }) => this.prompt('from', Zod.string().url(), {
+            from: ({ config, activeSupport }) => this.prompt('from', Zod.string().url(), {
                 type: 'text',
                 message: `[${Chalk.magenta(config.pathspec)}] From`,
-                initial: 'branch://develop'
+                initial: activeSupport ? `support://${activeSupport}/develop` : 'branch://develop'
             }),
             branchName: ({ config, fromElement, featureName }) => this.prompt('branchName', Zod.string(), {
                 type: 'text',
@@ -64,9 +64,9 @@ export class CreateInteractiveCommand extends BaseCommand {
                 message: 'Select Modules',
                 choices: configs.map(c => ({ title: c.pathspec, value: c.identifier, selected: targetConfigs.some(tc => tc.identifier === c.identifier) }))
             }),
-            checkout: () => this.prompt('checkout', Zod.boolean(), {
+            checkout: ({ config }) => this.prompt('checkout', Zod.boolean(), {
                 type: 'confirm',
-                message: 'Checkout'
+                message: `[${Chalk.magenta(config.pathspec)}] Checkout`,
             }),
             stdout: this.context.stdout,
             dryRun: this.dryRun
@@ -75,11 +75,11 @@ export class CreateInteractiveCommand extends BaseCommand {
 }
 
 export class CreateCommand extends BaseCommand {
-    static paths = [['feature', 'create']];
+    static paths = [['feature', 'create'], ['create', 'feature']];
 
     featureName = Option.String('--name', { required: true });
     branchName = Option.String('--branch-name');
-    from = Option.String('--from', 'branch://develop');
+    from = Option.String('--from');
 
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');
@@ -100,10 +100,37 @@ export class CreateCommand extends BaseCommand {
 
         await createFeature(rootConfig, {
             name: async () => this.featureName,
-            from: () => this.from,
+            from: ({ activeSupport }) => this.from ?? (activeSupport ? `support://${activeSupport}/develop` : 'branch://develop'),
             branchName: ({ fromElement, featureName }) => this.branchName ?? `${fromElement.type === 'support' ? `support/${fromElement.support.name}/` : ''}feature/${featureName}`,
             configs: () => targetConfigs,
             checkout: () => this.checkout,
+            stdout: this.context.stdout,
+            dryRun: this.dryRun
+        });
+    }
+}
+
+export class DeleteInteractiveCommand extends BaseCommand {
+    static paths = [['feature', 'delete'], ['delete', 'feature']];
+
+    static usage = Command.Usage({
+        description: 'Delete feature',
+        category: 'Feature'
+    });
+
+    public async execute() {
+        const rootConfig = await this.loadConfig();
+
+        await deleteFeature(rootConfig, {
+            name: () => this.prompt('featureName', Zod.string().nonempty(), {
+                type: 'text',
+                message: 'Feature Name'
+            }),
+            configs: ({ configs }) => this.prompt('configs', Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()), {
+                type: 'multiselect',
+                message: 'Select Modules',
+                choices: configs.map(c => ({ title: c.pathspec, value: c.identifier, selected: true }))
+            }),
             stdout: this.context.stdout,
             dryRun: this.dryRun
         });
@@ -231,10 +258,13 @@ export class MergeCommand extends BaseCommand {
     }
 }
 
-export class CloseCommand extends BaseCommand {
-    static paths = [['feature', 'close']];
+export class CloseInteractiveCommand extends BaseCommand {
+    static paths = [['feature', 'close'], ['close', 'feature']];
 
-    featureName = Option.String('--feature', { required: true });
+    include = Option.Array('--include');
+    exclude = Option.Array('--exclude');
+
+    abort = Option.Boolean('--abort,--finish', false);
 
     static usage = Command.Usage({
         description: 'Close feature',
@@ -242,19 +272,35 @@ export class CloseCommand extends BaseCommand {
     });
 
     public async execute() {
-        const config = await this.loadConfig();
-        const featureFqn = config.resolveFeatureFqn(this.featureName);
+        const rootConfig = await this.loadConfig();
 
-        const features = config.findFeatures(featureFqn);
-        for (const feature of features) {
-            if (await feature.parentConfig.resolveCurrentBranch({ stdout: this.context.stdout, dryRun: this.dryRun }) === feature.branchName)
-                await feature.parentConfig.checkoutBranch('develop', { stdout: this.context.stdout, dryRun: this.dryRun });
-
-            await feature.parentConfig.deleteBranch(feature.branchName, { stdout: this.context.stdout, dryRun: this.dryRun });
-
-            const idx = feature.parentConfig.features.indexOf(feature);
-            feature.parentConfig.features.splice(idx, 1);
-            await feature.parentConfig.save({ stdout: this.context.stdout, dryRun: this.dryRun });
-        }
+        await closeFeature(rootConfig, {
+            name: () => this.prompt('featureName', Zod.string().nonempty(), {
+                type: 'text',
+                message: 'Feature Name'
+            }),
+            configs: ({ configs }) => this.prompt('configs', Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()), {
+                type: 'multiselect',
+                message: 'Select Modules',
+                choices: configs.map(c => ({ title: c.pathspec, value: c.identifier, selected: true }))
+            }),
+            confirm: ({ config, message }) => this.prompt('configs', Zod.boolean(), {
+                type: 'confirm',
+                message: `[${Chalk.magenta(config.pathspec)}] ${message}`
+            }),
+            abort: () => this.abort,
+            deleteLocalBranch: ({ config }) => this.prompt('deleteLocalBranch', Zod.boolean(), {
+                type: 'confirm',
+                message: `[${Chalk.magenta(config.pathspec)}] Delete local branch?`,
+                initial: true
+            }),
+            deleteRemoteBranch: ({ config }) => this.prompt('deleteRemoteBranch', Zod.boolean(), {
+                type: 'confirm',
+                message: `[${Chalk.magenta(config.pathspec)}] Delete remote branch?`,
+                initial: true
+            }),
+            stdout: this.context.stdout,
+            dryRun: this.dryRun
+        });
     }
 }

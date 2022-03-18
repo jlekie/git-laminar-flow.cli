@@ -9,8 +9,8 @@ import * as Path from 'path';
 
 import * as Prompts from 'prompts';
 
-import { loadSettings } from '../lib/settings';
-import { loadV2Config } from '../lib/config';
+import { loadSettings } from 'lib/settings';
+import { loadV2Config } from 'lib/config';
 
 export abstract class BaseCommand extends Command {
     dryRun = Option.Boolean('--dry-run');

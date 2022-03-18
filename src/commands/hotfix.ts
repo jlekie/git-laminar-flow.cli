@@ -10,8 +10,8 @@ import * as Prompts from 'prompts';
 
 import { BaseCommand } from './common';
 
-import { loadV2Config, Config, Release, Hotfix, Support } from '../lib/config';
-import { createHotfix } from '../lib/actions';
+import { loadV2Config, Config, Release, Hotfix, Support } from 'lib/config';
+import { createHotfix, deleteHotfix } from 'lib/actions';
 
 export class CreateInteractiveCommand extends BaseCommand {
     static paths = [['hotfix', 'create']];
@@ -24,6 +24,7 @@ export class CreateInteractiveCommand extends BaseCommand {
     exclude = Option.Array('--exclude');
 
     checkout = Option.Boolean('--checkout');
+    intermediate = Option.Boolean('--intermediate');
 
     static usage = Command.Usage({
         description: 'Create hotfix',
@@ -49,10 +50,10 @@ export class CreateInteractiveCommand extends BaseCommand {
                 type: 'text',
                 message: 'Hotfix Name'
             }),
-            from: ({ config }) => this.prompt('from', Zod.string().url(), {
+            from: ({ config, activeSupport }) => this.prompt('from', Zod.string().url(), {
                 type: 'text',
                 message: `[${Chalk.magenta(config.pathspec)}] From`,
-                initial: 'branch://master'
+                initial: activeSupport ? `support://${activeSupport}/master` : 'branch://master'
             }),
             branchName: ({ config, fromElement, hotfixName }) => this.prompt('branchName', Zod.string(), {
                 type: 'text',
@@ -64,10 +65,11 @@ export class CreateInteractiveCommand extends BaseCommand {
                 message: 'Select Modules',
                 choices: configs.map(c => ({ title: c.pathspec, value: c.identifier, selected: targetConfigs.some(tc => tc.identifier === c.identifier) }))
             }),
-            checkout: () => this.prompt('checkout', Zod.boolean(), {
+            checkout: ({ config }) => this.prompt('checkout', Zod.boolean(), {
                 type: 'confirm',
-                message: 'Checkout'
+                message: `[${Chalk.magenta(config.pathspec)}] Checkout`,
             }),
+            intermediate: () => this.intermediate,
             stdout: this.context.stdout,
             dryRun: this.dryRun
         });
@@ -78,7 +80,7 @@ export class CreateCommand extends BaseCommand {
 
     hotfixName = Option.String('--name', { required: true });
     branchName = Option.String('--branch-name');
-    from = Option.String('--from', 'branch://master');
+    from = Option.String('--from');
 
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');
@@ -99,12 +101,43 @@ export class CreateCommand extends BaseCommand {
 
         await createHotfix(rootConfig, {
             name: async () => this.hotfixName,
-            from: () => this.from,
+            from: ({ activeSupport }) => this.from ?? (activeSupport ? `support://${activeSupport}/master` : 'branch://master'),
             branchName: ({ fromElement, hotfixName }) => this.branchName ?? `${fromElement.type === 'support' ? `support/${fromElement.support.name}/` : ''}feature/${hotfixName}`,
             configs: () => targetConfigs,
             checkout: () => this.checkout,
             stdout: this.context.stdout,
             dryRun: this.dryRun
         });
+    }
+}
+
+export class DeleteCommand extends BaseCommand {
+    static paths = [['hotfix', 'delete']];
+
+    names = Option.Rest({ required: 1 });
+
+    include = Option.Array('--include');
+    exclude = Option.Array('--exclude');
+
+    static usage = Command.Usage({
+        description: 'Delete hotfix',
+        category: 'Support'
+    });
+
+    public async execute() {
+        const rootConfig = await this.loadConfig();
+        const targetConfigs = await rootConfig.resolveFilteredConfigs({
+            included: this.include,
+            excluded: this.exclude
+        });
+
+        for (const hotfixName of this.names) {
+            await deleteHotfix(rootConfig, {
+                name: () => hotfixName,
+                configs: () => targetConfigs,
+                stdout: this.context.stdout,
+                dryRun: this.dryRun
+            });
+        }
     }
 }

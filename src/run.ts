@@ -21,6 +21,7 @@ cli.register(RepoCommands.SyncCommand);
 cli.register(RepoCommands.CloseCommand);
 cli.register(RepoCommands.ListCommand);
 cli.register(RepoCommands.CreateCommand);
+cli.register(RepoCommands.ResetStateCommand);
 
 cli.register(SubmoduleCommands.CloneCommand);
 
@@ -28,6 +29,14 @@ process.stdout.isTTY ? cli.register(FeatureCommands.CreateInteractiveCommand) : 
 process.stdout.isTTY ? cli.register(ReleaseCommands.CreateInteractiveCommand) : cli.register(ReleaseCommands.CreateCommand);
 process.stdout.isTTY ? cli.register(HotfixCommands.CreateInteractiveCommand) : cli.register(HotfixCommands.CreateCommand);
 process.stdout.isTTY ? cli.register(SupportCommands.CreateInteractiveCommand) : cli.register(SupportCommands.CreateCommand);
+
+process.stdout.isTTY && cli.register(FeatureCommands.DeleteInteractiveCommand);
+process.stdout.isTTY && cli.register(ReleaseCommands.DeleteInteractiveCommand);
+cli.register(HotfixCommands.DeleteCommand);
+cli.register(SupportCommands.DeleteCommand);
+
+process.stdout.isTTY && cli.register(FeatureCommands.CloseInteractiveCommand);
+process.stdout.isTTY && cli.register(ReleaseCommands.CloseInteractiveCommand);
 
 cli.register(SupportCommands.ActivateCommand);
 
