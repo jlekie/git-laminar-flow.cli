@@ -76,6 +76,8 @@ export class EditCommand extends BaseCommand {
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');
 
+    recursive = Option.Boolean('--recursive,-r');
+
     static usage = Command.Usage({
         description: 'Edit config',
         category: 'Config'
@@ -96,12 +98,17 @@ export class EditCommand extends BaseCommand {
 
         for (const config of targetConfigs) {
             if (!this.dryRun) {
-                await FS.writeFile(configPath, Yaml.dump(config), 'utf8');
+                await FS.writeFile(configPath, Yaml.dump(config.toHash()), 'utf8');
                 await executeVscodeEdit(configPath, { cwd: config.path, stdout: this.context.stdout, dryRun: this.dryRun });
 
                 const updatedConfig = await loadV2Config(`file://${configPath}`, settings, { stdout: this.context.stdout, cwd: config.path });
                 updatedConfig.migrateSource({ sourceUri: config.sourceUri, baseHash: config.baseHash });
                 await updatedConfig.saveV2({ stdout: this.context.stdout, dryRun: this.dryRun });
+
+                if (this.recursive) {
+                    for (const newConfig of updatedConfig.flattenConfigs().filter(c => c.isNew))
+                        await this.cli.run(['config', 'edit', `--config=${newConfig.sourceUri}`, '--recursive']);
+                }
             }
         }
 

@@ -1,10 +1,11 @@
 {
   "name": "@jlekie/git-laminar-flow-cli",
-  "version": "1.0.0-alpha.1",
+  "version": "1.0.0-alpha.2",
   "license": "UNLICENSED",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
+    "git-laminar-flow-cli": "dist/run.js",
     "git-laminar-flow": "dist/run.js",
     "glf": "dist/run.js"
   },

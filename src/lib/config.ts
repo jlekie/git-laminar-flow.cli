@@ -292,6 +292,35 @@ export async function loadV2Config(uri: string, settings: Settings, { cwd, paren
     return config;
 }
 
+export async function deleteConfig(uri: string, settings: Settings) {
+    const configRef = parseConfigReference(uri);
+
+    if (configRef.type === 'file') {
+        if (await FS.pathExists(configRef.path))
+            await FS.remove(configRef.path);
+    }
+    else if (configRef.type === 'http') {
+        await Axios.delete(`${configRef.protocol}://${configRef.url}`);
+    }
+    else if (configRef.type === 'glfs') {
+        const hostUrl = (() => {
+            const matchedRepo = configRef.hostname
+                ? settings.glfsRepositories.find(r => r.name === configRef.hostname)
+                : settings.getDefaultRepo();
+
+            if (matchedRepo)
+                return matchedRepo.url;
+            else
+                return `http://${configRef.hostname}`;
+        })();
+
+        await Axios.delete(`${hostUrl}/v1/${configRef.namespace}/${configRef.name}`);
+    }
+    else {
+        throw new Error(`Unsupported config type ${configRef.type}`);
+    }
+}
+
 // Either load the config from disk if it exists or create a new default config
 export async function loadConfig(path: string, settings: Settings, { cwd, parentConfig, parentSubmodule, pathspecPrefix }: { cwd?: string, parentConfig?: Config, parentSubmodule?: Submodule, pathspecPrefix?: string } = {}) {
     const config = await FS.pathExists(path)
@@ -380,7 +409,7 @@ export type Element = {
 };
 export type NarrowedElement<T, N> = T extends { type: N } ? T : never;
 
-export type ConfigParams = Pick<Config, 'identifier' | 'upstreams' | 'submodules' | 'features' | 'releases' | 'hotfixes' | 'supports' | 'included' | 'excluded'> & Partial<Pick<Config, 'featureMessageTemplate' | 'releaseMessageTemplate' | 'hotfixMessageTemplate' | 'releaseTagTemplate' | 'hotfixTagTemplate'>>;
+export type ConfigParams = Pick<Config, 'identifier' | 'upstreams' | 'submodules' | 'features' | 'releases' | 'hotfixes' | 'supports' | 'included' | 'excluded'> & Partial<Pick<Config, 'featureMessageTemplate' | 'releaseMessageTemplate' | 'hotfixMessageTemplate' | 'releaseTagTemplate' | 'hotfixTagTemplate' | 'isNew'>>;
 export class Config {
     public identifier: string;
     public upstreams: Array<{ name: string, url: string }>;
@@ -396,6 +425,8 @@ export class Config {
     public hotfixMessageTemplate?: string;
     public releaseTagTemplate?: string;
     public hotfixTagTemplate?: string;
+
+    public readonly isNew: boolean;
 
     #initialized: boolean = false;
 
@@ -490,7 +521,8 @@ export class Config {
             hotfixes: [],
             supports: [],
             included: [],
-            excluded: []
+            excluded: [],
+            isNew: true
         });
     }
 
@@ -509,6 +541,8 @@ export class Config {
         this.hotfixMessageTemplate = params.hotfixMessageTemplate;
         this.releaseTagTemplate = params.releaseTagTemplate;
         this.hotfixTagTemplate = params.hotfixTagTemplate;
+
+        this.isNew = params.isNew ?? false;
     }
 
     // Register internals (initialize)
@@ -860,6 +894,10 @@ export class Config {
                     await exec(`git init`, { cwd: this.path, stdout, dryRun });
                     await exec(`git remote add ${originUpstream.name} ${originUpstream.url}`, { cwd: this.path, stdout, dryRun });
                     await exec(`git fetch`, { cwd: this.path, stdout, dryRun });
+
+                    if (!await this.branchExists('master', { stdout, dryRun })) {
+                        await exec(`git commit --allow-empty -m "initial commit"`, { cwd: this.path, stdout, dryRun });
+                    }
                 }
                 else {
                     await exec(`git init`, { cwd: this.path, stdout, dryRun });
@@ -871,6 +909,10 @@ export class Config {
             const originUpstream = this.upstreams.find(r => r.name == 'origin');
             if (originUpstream) {
                 await exec(`git clone ${originUpstream.url} ${this.path}`, { stdout, dryRun });
+
+                if (!await this.branchExists('master', { stdout, dryRun })) {
+                    await exec(`git commit --allow-empty -m "initial commit"`, { cwd: this.path, stdout, dryRun });
+                }
             }
             else {
                 await FS.ensureDir(this.path);
@@ -905,6 +947,8 @@ export class Config {
             else {
                 await this.createBranch('develop', { stdout, dryRun });
             }
+
+            await this.checkoutBranch('develop', { stdout, dryRun });
         }
 
         // // Create gitflow branch if missing
@@ -967,8 +1011,8 @@ export class Config {
         for (const support of this.supports)
             await support.init({ stdout, dryRun });
 
-        // Save updated config to disk
-        await this.save({ stdout, dryRun });
+        // // Save updated config to disk
+        // await this.save({ stdout, dryRun });
     }
 
     public async deleteFeature(feature: Feature) {
