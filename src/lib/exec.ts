@@ -18,7 +18,7 @@ export interface InputOptions {
 }
 
 export async function exec(cmd: string, { cwd, stdout, dryRun }: ExecOptions = {}) {
-    stdout?.write(Chalk.gray(`${cmd} [${Path.resolve(cwd ?? '.')}]\n`));
+    stdout?.write(Chalk.gray(`${Chalk.cyan(cmd)} [${Path.resolve(cwd ?? '.')}]\n`));
 
     if (dryRun)
         return;
@@ -36,7 +36,7 @@ export async function exec(cmd: string, { cwd, stdout, dryRun }: ExecOptions = {
     });
 }
 export async function execCmd(cmd: string, { cwd, stdout, dryRun }: ExecOptions = {}) {
-    stdout?.write(Chalk.gray(`${cmd} [${Path.resolve(cwd ?? '.')}]\n`));
+    stdout?.write(Chalk.gray(`${Chalk.cyan(cmd)} [${Path.resolve(cwd ?? '.')}]\n`));
 
     // if (dryRun)
     //     return '';

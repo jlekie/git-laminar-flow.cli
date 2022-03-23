@@ -233,7 +233,7 @@ export async function loadV2Config(uri: string, settings: Settings, { cwd, paren
 
     cwd = Path.resolve(cwd ?? '.');
 
-    stdout?.write(Chalk.blue(`Loading file from ${uri} [${cwd}]\n`));
+    stdout?.write(Chalk.gray(`Loading file from ${uri} [${cwd}]\n`));
 
     const config = await (async () => {
         const configRef = parseConfigReference(uri);
@@ -1152,7 +1152,8 @@ export class Config {
     }
 
     public async loadState() {
-        const statePath = Path.join(this.path, '.gitflowstate');
+        const statePath = Path.join(this.path, '.glf', 'state.json');
+
         return await FS.pathExists(statePath)
             ? await FS.readFile(statePath, 'utf8')
                 .then(content => JSON.parse(content))
@@ -1160,7 +1161,7 @@ export class Config {
             : {};
     }
     public async saveState(state: State) {
-        const statePath = Path.join(this.path, '.gitflowstate');
+        const statePath = Path.join(this.path, '.glf', 'state.json');
 
         const content = JSON.stringify(state);
         await FS.writeFile(statePath, content, 'utf8');

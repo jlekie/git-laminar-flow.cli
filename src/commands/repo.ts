@@ -725,3 +725,21 @@ export class ResetStateCommand extends BaseCommand {
             await config.saveState({});
     }
 }
+
+export class ValidateCommand extends BaseCommand {
+    static paths = [['validate']];
+
+    include = Option.Array('--include');
+    exclude = Option.Array('--exclude');
+
+    public async execute() {
+        const config = await this.loadConfig();
+        const targetConfigs = await config.resolveFilteredConfigs({
+            included: this.include,
+            excluded: this.exclude
+        });
+
+        for (const config of targetConfigs)
+            await config.saveState({});
+    }
+}

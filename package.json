@@ -5,8 +5,8 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "git-laminar-flow-cli": "dist/run.js",
     "git-laminar-flow": "dist/run.js",
+    "git-laminar-flow-cli": "dist/run.js",
     "glf": "dist/run.js"
   },
   "scripts": {
