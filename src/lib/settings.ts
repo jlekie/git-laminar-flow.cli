@@ -5,7 +5,8 @@ import * as Zod from 'zod';
 
 export const GlfsRepositorySchema = Zod.object({
     name: Zod.string(),
-    url: Zod.string().url()
+    url: Zod.string().url(),
+    apiKey: Zod.string().optional()
 });
 export const SettingsSchema = Zod.object({
     defaultGlfsRepository: Zod.string(),
@@ -55,20 +56,21 @@ export class Settings {
 export class GlfsRepository {
     public readonly name: string;
     public readonly url: string;
+    public readonly apiKey?: string;
 
     public static parse(value: unknown) {
         return this.fromSchema(GlfsRepositorySchema.parse(value));
     }
     public static fromSchema(value: Zod.infer<typeof GlfsRepositorySchema>) {
         return new GlfsRepository({
-            name: value.name,
-            url: value.url
+            ...value
         });
     }
 
-    public constructor(params: Pick<GlfsRepository, 'name' | 'url'>) {
+    public constructor(params: Pick<GlfsRepository, 'name' | 'url'> & Partial<Pick<GlfsRepository, 'apiKey'>>) {
         this.name = params.name;
         this.url = params.url;
+        this.apiKey = params.apiKey;
     }
 }
 

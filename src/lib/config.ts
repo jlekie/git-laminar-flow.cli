@@ -262,18 +262,23 @@ export async function loadV2Config(uri: string, settings: Settings, { cwd, paren
                 });
         }
         else if (configRef.type === 'glfs') {
-            const hostUrl = (() => {
+            const [hostUrl, apiKey] = (() => {
                 const matchedRepo = configRef.hostname
                     ? settings.glfsRepositories.find(r => r.name === configRef.hostname)
                     : settings.getDefaultRepo();
 
                 if (matchedRepo)
-                    return matchedRepo.url;
+                    return [matchedRepo.url, matchedRepo.apiKey];
                 else
-                    return `http://${configRef.hostname}`;
+                    return [`http://${configRef.hostname}`];
             })();
 
-            return await Axios.get(`${hostUrl}/v1/${configRef.namespace}/${configRef.name}`)
+            return await Axios.get(`${hostUrl}/v1/${configRef.namespace}/${configRef.name}`, {
+                auth: apiKey ? {
+                    username: 'glf.cli',
+                    password: apiKey
+                } : undefined
+            })
                 .then(response => Config.parse(response.data))
                 .catch(err => {
                     if (Axios.isAxiosError(err) && err.response?.status === 404)
@@ -1127,22 +1132,26 @@ export class Config {
             }
         }
         else if (configRef.type === 'glfs') {
-            const hostUrl = (() => {
+            const [hostUrl, apiKey] = (() => {
                 const matchedRepo = configRef.hostname
                     ? this.settings.glfsRepositories.find(r => r.name === configRef.hostname)
                     : this.settings.getDefaultRepo();
 
                 if (matchedRepo)
-                    return matchedRepo.url;
+                    return [matchedRepo.url, matchedRepo.apiKey];
                 else
-                    return `http://${configRef.hostname}`;
+                    return [`http://${configRef.hostname}`];
             })();
 
             if (!dryRun) {
                 await Axios.put(`${hostUrl}/v1/${configRef.namespace}/${configRef.name}`, this.toHash(), {
                     headers: {
                         'if-match': this.baseHash
-                    }
+                    },
+                    auth: apiKey ? {
+                        username: 'glf.cli',
+                        password: apiKey
+                    } : undefined
                 });
             }
         }

@@ -116,6 +116,36 @@ export class EditCommand extends BaseCommand {
     }
 }
 
+export class MigrateCommand extends BaseCommand {
+    static paths = [['config', 'migrate']];
+
+    include = Option.Array('--include');
+    exclude = Option.Array('--exclude');
+
+    uri = Option.String('--uri', { required: true });
+
+    static usage = Command.Usage({
+        description: 'Edit config',
+        category: 'Config'
+    });
+
+    public async execute() {
+        const settings = await this.loadSettings();
+        const config = await loadV2Config(this.configPath, settings, { stdout: this.context.stdout, dryRun: this.dryRun });
+        const targetConfigs = await config.resolveFilteredConfigs({
+            included: this.include ?? [ 'repo://root' ],
+            excluded: this.exclude
+        });
+
+        for (const config of targetConfigs) {
+            if (!this.dryRun) {
+                config.migrateSource({ sourceUri: this.uri });
+                await config.saveV2({ stdout: this.context.stdout, dryRun: this.dryRun });
+            }
+        }
+    }
+}
+
 async function executeVscodeEdit(path: string, options: ExecOptions = {}) {
     const termProgram = process.env['TERM_PROGRAM'];
     const termProgramVersion = process.env['TERM_PROGRAM_VERSION'];
