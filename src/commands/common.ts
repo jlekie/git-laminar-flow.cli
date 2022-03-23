@@ -15,7 +15,7 @@ import { loadV2Config } from 'lib/config';
 export abstract class BaseCommand extends Command {
     dryRun = Option.Boolean('--dry-run');
     configPath = Option.String('--config', 'branch://gitflow');
-    settingsPath = Option.String('--settings', Path.resolve(OS.homedir(), '.gitflow/cli.yml'));
+    settingsPath = Option.String('--settings', Path.resolve(OS.homedir(), '.glf/cli.yml'));
 
     abstract execute(): Promise<number | void>;
 
