@@ -11,6 +11,9 @@ import * as Yaml from 'js-yaml';
 
 import * as Tmp from 'tmp-promise';
 
+import * as Zod from 'zod';
+import { RecursiveConfigSchema } from '@jlekie/git-laminar-flow';
+
 import { BaseCommand } from './common';
 import { exec, execCmd, ExecOptions } from 'lib/exec';
 
@@ -70,11 +73,28 @@ export class ImportCommand extends BaseCommand {
     }
 }
 
+async function *resolveUpdatedConfigs(sourceConfigs: Config[], rawConfig: RecursiveConfigSchema): AsyncGenerator<Config> {
+    const sourceConfig = sourceConfigs.find(c => c.identifier === rawConfig.identifier);
+    if (!sourceConfig)
+        throw new Error(`No existing config with matching identifier of "${rawConfig.identifier}"`);
+
+    const config = Config.fromSchema(rawConfig);
+    await config.register(sourceConfig.path, sourceConfig.sourceUri, sourceConfig.baseHash, sourceConfig.settings, sourceConfig.parentConfig, sourceConfig.parentSubmodule, sourceConfig.pathspec);
+
+    if (config.calculateHash() !== config.baseHash)
+        yield config;
+
+    for (const submodule of rawConfig.submodules ?? []) {
+        if (submodule.config && submodule.url) {
+            for await (const config of resolveUpdatedConfigs(sourceConfigs, submodule.config)) {
+                yield config;
+            }
+        }
+    }
+}
+
 export class EditCommand extends BaseCommand {
     static paths = [['config', 'edit']];
-
-    include = Option.Array('--include');
-    exclude = Option.Array('--exclude');
 
     recursive = Option.Boolean('--recursive,-r');
 
@@ -86,31 +106,34 @@ export class EditCommand extends BaseCommand {
     public async execute() {
         const settings = await this.loadSettings();
         const config = await loadV2Config(this.configPath, settings, { stdout: this.context.stdout, dryRun: this.dryRun });
-        const targetConfigs = await config.resolveFilteredConfigs({
-            included: this.include ?? [ 'repo://root' ],
-            excluded: this.exclude
-        });
 
         const tmpDir = await Tmp.dir({
             unsafeCleanup: true
         });
         const configPath = Path.join(tmpDir.path, '.gitflow.yml');
 
-        for (const config of targetConfigs) {
-            if (!this.dryRun) {
-                await FS.writeFile(configPath, Yaml.dump(config.toHash()), 'utf8');
-                await executeVscodeEdit(configPath, { cwd: config.path, stdout: this.context.stdout, dryRun: this.dryRun });
+        await FS.writeFile(configPath, Yaml.dump(config.toRecursiveHash(), { lineWidth: 120 }), 'utf8');
+        this.context.stdout.write(Chalk.yellow('Editing the config is an advanced feature. BE CAREFUL!\n'));
+        await executeVscodeEdit(configPath, { cwd: config.path, stdout: this.context.stdout });
 
-                const updatedConfig = await loadV2Config(`file://${configPath}`, settings, { stdout: this.context.stdout, cwd: config.path });
-                updatedConfig.migrateSource({ sourceUri: config.sourceUri, baseHash: config.baseHash });
-                await updatedConfig.saveV2({ stdout: this.context.stdout, dryRun: this.dryRun });
+        const rawConfig = await FS.readFile(configPath, 'utf8')
+            .then(content => Yaml.load(content))
+            .then(hash => RecursiveConfigSchema.parse(hash));
 
-                if (this.recursive) {
-                    for (const newConfig of updatedConfig.flattenConfigs().filter(c => c.isNew))
-                        await this.cli.run(['config', 'edit', `--config=${newConfig.sourceUri}`, '--recursive']);
-                }
-            }
-        }
+        for await (const updatedConfig of resolveUpdatedConfigs(config.flattenConfigs(), rawConfig))
+            await updatedConfig.saveV2({ stdout: this.context.stdout, dryRun: this.dryRun });
+
+        // const updatedConfig = await loadV2Config(`file://${configPath}`, settings, { stdout: this.context.stdout, cwd: config.path });
+
+        // if (!this.dryRun) {
+        //     updatedConfig.migrateSource({ sourceUri: config.sourceUri, baseHash: config.baseHash });
+        //     await updatedConfig.saveV2({ stdout: this.context.stdout, dryRun: this.dryRun });
+
+        //     if (this.recursive) {
+        //         for (const newConfig of updatedConfig.flattenConfigs().filter(c => c.isNew))
+        //             await this.cli.run(['config', 'edit', `--config=${newConfig.sourceUri}`, '--recursive']);
+        //     }
+        // }
 
         await tmpDir.cleanup();
     }

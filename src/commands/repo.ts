@@ -549,9 +549,9 @@ export class ListCommand extends BaseCommand {
 
                 table.push({ 'Upstreams': featureTable.toString() });
             }
-            else {
-                table.push({ 'Upstreams': 'None' });
-            }
+            // else {
+            //     table.push({ 'Upstreams': 'None' });
+            // }
 
             if (config.features.length) {
                 const featureTable = new Table({

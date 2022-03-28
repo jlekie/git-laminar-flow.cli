@@ -1284,6 +1284,13 @@ export class Config {
             this.#baseHash = baseHash;
     }
 
+    public toRecursiveHash() {
+        return {
+            ...this.toHash(),
+            submodules: this.submodules.map(s => s.toRecursiveHash())
+        }
+    }
+
     // public toJSON() {
     //     return {
     //         identifier: this.identifier,
@@ -1371,6 +1378,13 @@ export class Submodule {
         });
 
         return config;
+    }
+
+    public toRecursiveHash() {
+        return {
+            ...this.toHash(),
+            config: this.config.toHash()
+        }
     }
 }
 
