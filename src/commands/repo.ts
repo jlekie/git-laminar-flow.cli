@@ -534,12 +534,16 @@ export class ListCommand extends BaseCommand {
             });
             table.push(
                 { 'Path': config.pathspec },
-                { 'Identifier': config.identifier }
+                // { 'Identifier': config.identifier }
             );
 
             if (config.upstreams.length) {
                 const featureTable = new Table({
-                    head: ['Name', 'Url']
+                    head: ['Name', 'Url'],
+                    // chars: { 'top': '' , 'top-mid': '' , 'top-left': '' , 'top-right': ''
+                    //         , 'bottom': '' , 'bottom-mid': '' , 'bottom-left': '' , 'bottom-right': ''
+                    //         , 'left': '' , 'left-mid': '' , 'mid': '' , 'mid-mid': ''
+                    //         , 'right': '' , 'right-mid': '' , 'middle': ' ' }
                 });
                 featureTable.push(...config.upstreams.map(i => [ i.name, i.url ]));
 
@@ -557,9 +561,9 @@ export class ListCommand extends BaseCommand {
 
                 table.push({ 'Features': featureTable.toString() });
             }
-            else {
-                table.push({ 'Features': 'None' });
-            }
+            // else {
+            //     table.push({ 'Features': 'None' });
+            // }
 
             if (config.releases.length) {
                 const releaseTable = new Table({
@@ -569,9 +573,9 @@ export class ListCommand extends BaseCommand {
 
                 table.push({ 'Releases': releaseTable.toString() });
             }
-            else {
-                table.push({ 'Releases': 'None' });
-            }
+            // else {
+            //     table.push({ 'Releases': 'None' });
+            // }
 
             if (config.hotfixes.length) {
                 const hotfixTable = new Table({
@@ -581,9 +585,9 @@ export class ListCommand extends BaseCommand {
 
                 table.push({ 'Hotfixes': hotfixTable.toString() });
             }
-            else {
-                table.push({ 'Hotfixes': 'None' });
-            }
+            // else {
+            //     table.push({ 'Hotfixes': 'None' });
+            // }
 
             if (config.supports.length) {
                 // const supportTable = new Table({
@@ -632,9 +636,9 @@ export class ListCommand extends BaseCommand {
 
                 table.push({ 'Supports': tmp });
             }
-            else {
-                table.push({ 'Supports': 'None' });
-            }
+            // else {
+            //     table.push({ 'Supports': 'None' });
+            // }
 
             this.context.stdout.write(table.toString() + '\n\n');
         }

@@ -137,10 +137,8 @@ export class CreateCommand extends BaseCommand {
     }
 }
 
-export class DeleteCommand extends BaseCommand {
-    static paths = [['support', 'delete']];
-
-    supportName = Option.Rest({ required: 1 });
+export class DeleteInteractiveCommand extends BaseCommand {
+    static paths = [['support', 'delete'], ['delete', 'support']];
 
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');
@@ -152,14 +150,17 @@ export class DeleteCommand extends BaseCommand {
 
     public async execute() {
         const rootConfig = await this.loadConfig();
-        const targetConfigs = await rootConfig.resolveFilteredConfigs({
-            included: this.include,
-            excluded: this.exclude
-        });
 
         await deleteSupport(rootConfig, {
-            name: async () => this.supportName[0],
-            configs: () => targetConfigs,
+            name: async () => this.prompt('supportName', Zod.string().nonempty(), {
+                type: 'text',
+                message: 'Support Name'
+            }),
+            configs: ({ configs }) => this.prompt('configs', Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()), {
+                type: 'multiselect',
+                message: 'Select Modules',
+                choices: configs.map(c => ({ title: c.pathspec, value: c.identifier, selected: true }))
+            }),
             stdout: this.context.stdout,
             dryRun: this.dryRun
         });

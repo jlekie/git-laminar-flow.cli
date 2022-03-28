@@ -239,6 +239,9 @@ export async function deleteFeature(rootConfig: Config, { stdout, dryRun, ...par
     for (const config of configs) {
         const { feature } = await config.findElement('feature', featureName);
 
+        if (await config.resolveCurrentBranch({ stdout, dryRun }) === feature.branchName)
+            await config.checkoutBranch('develop', { stdout, dryRun });
+
         if (await config.branchExists(feature.branchName, { stdout, dryRun }))
             await config.deleteBranch(feature.branchName, { stdout, dryRun });
 
@@ -262,6 +265,9 @@ export async function deleteRelease(rootConfig: Config, { stdout, dryRun, ...par
     for (const config of configs) {
         const { release } = await config.findElement('release', releaseName);
 
+        if (await config.resolveCurrentBranch({ stdout, dryRun }) === release.branchName)
+            await config.checkoutBranch('develop', { stdout, dryRun });
+
         if (await config.branchExists(release.branchName, { stdout, dryRun }))
             await config.deleteBranch(release.branchName, { stdout, dryRun });
 
@@ -277,10 +283,16 @@ export async function deleteHotfix(rootConfig: Config, { stdout, dryRun, ...para
 }>) {
     const hotfixName = await params.name();
 
-    const allConfigs = rootConfig.flattenConfigs();
+    const allConfigs = await Bluebird.filter(rootConfig.flattenConfigs(), c => c.hasElement(`hotfix://${hotfixName}`));
+    if (!allConfigs.length)
+        return;
+    
     const configs = await params.configs({ configs: allConfigs });
     for (const config of configs) {
         const { hotfix } = await config.findElement('hotfix', hotfixName);
+
+        if (await config.resolveCurrentBranch({ stdout, dryRun }) === hotfix.branchName)
+            await config.checkoutBranch('develop', { stdout, dryRun });
 
         if (await config.branchExists(hotfix.branchName, { stdout, dryRun }))
             await config.deleteBranch(hotfix.branchName, { stdout, dryRun });
@@ -297,14 +309,19 @@ export async function deleteSupport(rootConfig: Config, { stdout, dryRun, ...par
 }>) {
     const supportName = await params.name();
 
-    const allConfigs = rootConfig.flattenConfigs();
+    const allConfigs = await Bluebird.filter(rootConfig.flattenConfigs(), c => c.hasElement(`support://${supportName}`));
+    if (!allConfigs.length)
+        return;
+    
     const configs = await params.configs({ configs: allConfigs });
     for (const config of configs) {
         const { support } = await config.findElement('support', supportName);
 
+        if ([ support.masterBranchName, support.developBranchName ].indexOf(await config.resolveCurrentBranch({ stdout, dryRun })) >= 0)
+            await config.checkoutBranch('develop', { stdout, dryRun });
+
         if (await config.branchExists(support.masterBranchName, { stdout, dryRun }))
             await config.deleteBranch(support.masterBranchName, { stdout, dryRun });
-
         if (await config.branchExists(support.developBranchName, { stdout, dryRun }))
             await config.deleteBranch(support.developBranchName, { stdout, dryRun });
 

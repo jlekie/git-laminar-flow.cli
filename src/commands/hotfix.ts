@@ -120,7 +120,7 @@ export class CreateCommand extends BaseCommand {
     }
 }
 
-export class DeleteCommand extends BaseCommand {
+export class DeleteInteractiveCommand extends BaseCommand {
     static paths = [['hotfix', 'delete']];
 
     names = Option.Rest({ required: 1 });
@@ -135,18 +135,19 @@ export class DeleteCommand extends BaseCommand {
 
     public async execute() {
         const rootConfig = await this.loadConfig();
-        const targetConfigs = await rootConfig.resolveFilteredConfigs({
-            included: this.include,
-            excluded: this.exclude
-        });
 
-        for (const hotfixName of this.names) {
-            await deleteHotfix(rootConfig, {
-                name: () => hotfixName,
-                configs: () => targetConfigs,
-                stdout: this.context.stdout,
-                dryRun: this.dryRun
-            });
-        }
+        await deleteHotfix(rootConfig, {
+            name: () => this.prompt('hotfixName', Zod.string().nonempty(), {
+                type: 'text',
+                message: 'Hotfix Name'
+            }),
+            configs: ({ configs }) => this.prompt('configs', Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()), {
+                type: 'multiselect',
+                message: 'Select Modules',
+                choices: configs.map(c => ({ title: c.pathspec, value: c.identifier, selected: true }))
+            }),
+            stdout: this.context.stdout,
+            dryRun: this.dryRun
+        });
     }
 }

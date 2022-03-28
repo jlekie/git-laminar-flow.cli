@@ -32,8 +32,8 @@ process.stdout.isTTY ? cli.register(SupportCommands.CreateInteractiveCommand) : 
 
 process.stdout.isTTY && cli.register(FeatureCommands.DeleteInteractiveCommand);
 process.stdout.isTTY && cli.register(ReleaseCommands.DeleteInteractiveCommand);
-cli.register(HotfixCommands.DeleteCommand);
-cli.register(SupportCommands.DeleteCommand);
+process.stdout.isTTY && cli.register(HotfixCommands.DeleteInteractiveCommand);
+process.stdout.isTTY && cli.register(SupportCommands.DeleteInteractiveCommand);
 
 process.stdout.isTTY && cli.register(FeatureCommands.CloseInteractiveCommand);
 process.stdout.isTTY && cli.register(ReleaseCommands.CloseInteractiveCommand);

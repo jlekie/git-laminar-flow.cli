@@ -698,7 +698,7 @@ export class Config {
             return { type: 'repo', config };
         }
         else if (type === 'feature') {
-            const parts = value.split('/');
+            const parts = value.split(':');
 
             if (parts.length === 2) {
                 const support = this.supports.find(s => s.name === parts[0]);
@@ -720,7 +720,7 @@ export class Config {
             }
         }
         else if (type === 'release') {
-            const parts = value.split('/');
+            const parts = value.split(':');
 
             if (parts.length === 2) {
                 const support = this.supports.find(s => s.name === parts[0]);
@@ -742,7 +742,7 @@ export class Config {
             }
         }
         else if (type === 'hotfix') {
-            const parts = value.split('/');
+            const parts = value.split(':');
 
             if (parts.length === 2) {
                 const support = this.supports.find(s => s.name === parts[0]);
@@ -1171,6 +1171,7 @@ export class Config {
     }
     public async saveState(state: State) {
         const statePath = Path.join(this.path, '.glf', 'state.json');
+        await FS.ensureFile(statePath);
 
         const content = JSON.stringify(state);
         await FS.writeFile(statePath, content, 'utf8');
