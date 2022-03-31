@@ -31,7 +31,7 @@ export class CreateInteractiveCommand extends BaseCommand {
         category: 'Hotfix'
     });
 
-    public async execute() {
+    public async executeCommand() {
         Prompts.override({
             featureName: this.featureName,
             branchName: this.branchName,
@@ -101,7 +101,7 @@ export class CreateCommand extends BaseCommand {
         category: 'Hotfix'
     });
 
-    public async execute() {
+    public async executeCommand() {
         const rootConfig = await this.loadConfig();
         const targetConfigs = await rootConfig.resolveFilteredConfigs({
             included: this.include,
@@ -133,7 +133,7 @@ export class DeleteInteractiveCommand extends BaseCommand {
         category: 'Support'
     });
 
-    public async execute() {
+    public async executeCommand() {
         const rootConfig = await this.loadConfig();
 
         await deleteHotfix(rootConfig, {

@@ -32,9 +32,13 @@ export class ImportCommand extends BaseCommand {
         category: 'Config'
     });
 
-    public async execute() {
+    public async executeCommand() {
+        const configPath = await this.resolveConfigPath();
+        if (!configPath)
+            throw new Error('Must specify a config URI');
+
         const settings = await this.loadSettings();
-        const config = await loadV2Config(this.configPath, settings, { stdout: this.context.stdout, dryRun: this.dryRun });
+        const config = await loadV2Config(configPath, settings, { stdout: this.context.stdout, dryRun: this.dryRun });
         const targetConfig = await loadV2Config(this.targetConfigPath, settings, { stdout: this.context.stdout, dryRun: this.dryRun });
 
         config.migrateSource({
@@ -103,20 +107,24 @@ export class EditCommand extends BaseCommand {
         category: 'Config'
     });
 
-    public async execute() {
+    public async executeCommand() {
+        const configPath = await this.resolveConfigPath();
+        if (!configPath)
+            throw new Error('Must specify a config URI');
+
         const settings = await this.loadSettings();
-        const config = await loadV2Config(this.configPath, settings, { stdout: this.context.stdout, dryRun: this.dryRun });
+        const config = await loadV2Config(configPath, settings, { stdout: this.context.stdout, dryRun: this.dryRun });
 
         const tmpDir = await Tmp.dir({
             unsafeCleanup: true
         });
-        const configPath = Path.join(tmpDir.path, '.gitflow.yml');
+        const tmpConfigPath = Path.join(tmpDir.path, '.gitflow.yml');
 
-        await FS.writeFile(configPath, Yaml.dump(config.toRecursiveHash(), { lineWidth: 120 }), 'utf8');
+        await FS.writeFile(tmpConfigPath, Yaml.dump(config.toRecursiveHash(), { lineWidth: 120 }), 'utf8');
         this.context.stdout.write(Chalk.yellow('Editing the config is an advanced feature. BE CAREFUL!\n'));
-        await executeVscodeEdit(configPath, { cwd: config.path, stdout: this.context.stdout });
+        await executeVscodeEdit(tmpConfigPath, { cwd: config.path, stdout: this.context.stdout });
 
-        const rawConfig = await FS.readFile(configPath, 'utf8')
+        const rawConfig = await FS.readFile(tmpConfigPath, 'utf8')
             .then(content => Yaml.load(content))
             .then(hash => RecursiveConfigSchema.parse(hash));
 
@@ -152,9 +160,13 @@ export class MigrateCommand extends BaseCommand {
         category: 'Config'
     });
 
-    public async execute() {
+    public async executeCommand() {
+        const configPath = await this.resolveConfigPath();
+        if (!configPath)
+            throw new Error('Must specify a config URI');
+
         const settings = await this.loadSettings();
-        const config = await loadV2Config(this.configPath, settings, { stdout: this.context.stdout, dryRun: this.dryRun });
+        const config = await loadV2Config(configPath, settings, { stdout: this.context.stdout, dryRun: this.dryRun });
         const targetConfigs = await config.resolveFilteredConfigs({
             included: this.include ?? [ 'repo://root' ],
             excluded: this.exclude

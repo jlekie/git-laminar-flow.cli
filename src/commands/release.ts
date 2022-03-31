@@ -30,7 +30,7 @@ export class CreateInteractiveCommand extends BaseCommand {
         category: 'Release'
     });
 
-    public async execute() {
+    public async executeCommand() {
         Prompts.override({
             releaseName: this.releaseName,
             branchName: this.branchName,
@@ -100,7 +100,7 @@ export class CreateCommand extends BaseCommand {
         category: 'Release'
     });
 
-    public async execute() {
+    public async executeCommand() {
         const rootConfig = await this.loadConfig();
         const targetConfigs = await rootConfig.resolveFilteredConfigs({
             included: this.include,
@@ -127,7 +127,7 @@ export class DeleteInteractiveCommand extends BaseCommand {
         category: 'Support'
     });
 
-    public async execute() {
+    public async executeCommand() {
         const rootConfig = await this.loadConfig();
 
         await deleteRelease(rootConfig, {
@@ -156,7 +156,7 @@ export class CheckoutCommand extends BaseCommand {
         category: 'Release'
     });
 
-    public async execute() {
+    public async executeCommand() {
         const config = await this.loadConfig();
         const featureFqn = config.resolveFeatureFqn(this.releaseName);
 
@@ -178,7 +178,7 @@ export class SyncCommand extends BaseCommand {
         category: 'Release'
     });
 
-    public async execute() {
+    public async executeCommand() {
         const config = await this.loadConfig();
         const featureFqn = config.resolveFeatureFqn(this.releaseName);
 
@@ -211,7 +211,7 @@ export class MergeCommand extends BaseCommand {
         category: 'Release'
     });
 
-    public async execute() {
+    public async executeCommand() {
         const config = await this.loadConfig();
         const featureFqn = config.resolveFeatureFqn(this.releaseName);
 
@@ -244,7 +244,7 @@ export class CloseInteractiveCommand extends BaseCommand {
         category: 'Release'
     });
 
-    public async execute() {
+    public async executeCommand() {
         const rootConfig = await this.loadConfig();
 
         await closeRelease(rootConfig, {

@@ -14,7 +14,7 @@ export class CloneCommand extends BaseCommand {
         category: 'Submodule'
     });
 
-    public async execute() {
+    public async executeCommand() {
         const config = await this.loadConfig();
     }
 }

@@ -32,7 +32,7 @@ export class InitCommand extends BaseCommand {
         details: 'This will initialize the repo'
     });
 
-    public async execute() {
+    public async executeCommand() {
         const config = await this.loadConfig();
         const targetConfigs = await config.resolveFilteredConfigs({
             included: this.include ?? [ 'repo://**' ],
@@ -60,7 +60,7 @@ export class CheckoutCommand extends BaseCommand {
         description: 'Checkout feature'
     });
 
-    public async execute() {
+    public async executeCommand() {
         const config = await this.loadConfig();
         const targetConfigs = await config.resolveFilteredConfigs({
             included: this.include,
@@ -108,7 +108,7 @@ export class FetchCommand extends BaseCommand {
         description: 'Fetch'
     });
 
-    public async execute() {
+    public async executeCommand() {
         const config = await this.loadConfig();
 
         const targetConfigs = [
@@ -131,7 +131,7 @@ export class ExecCommand extends BaseCommand {
         description: 'Execute CLI command in repo'
     });
 
-    public async execute() {
+    public async executeCommand() {
         const config = await this.loadConfig();
         const targetConfigs = await config.resolveFilteredConfigs({
             included: this.include,
@@ -156,7 +156,7 @@ export class StatusCommand extends BaseCommand {
         description: 'Report checkout status'
     });
 
-    public async execute() {
+    public async executeCommand() {
         const config = await this.loadConfig();
         const targetConfigs = await config.resolveFilteredConfigs({
             included: this.include,
@@ -193,7 +193,7 @@ export class SyncCommand extends BaseCommand {
         description: 'Sync checkouts with branch'
     });
 
-    public async execute() {
+    public async executeCommand() {
         const config = await this.loadConfig();
         const targetConfigs = await config.resolveFilteredConfigs({
             included: this.include,
@@ -247,7 +247,7 @@ export class CloseCommand extends BaseCommand {
         description: 'Closes active features/release/hotfix'
     });
 
-    public async execute() {
+    public async executeCommand() {
         const config = await this.loadConfig();
         const targetConfigs = await config.resolveFilteredConfigs({
             included: this.include,
@@ -518,7 +518,7 @@ export class ListCommand extends BaseCommand {
         description: 'Execute CLI command in repo'
     });
 
-    public async execute() {
+    public async executeCommand() {
         const config = await this.loadConfig();
         const targetConfigs = await config.resolveFilteredConfigs({
             included: this.include,
@@ -656,7 +656,7 @@ export class CreateCommand extends BaseCommand {
     from = Option.String('--from', 'branch://develop');
     checkout = Option.Boolean('--checkout', false);
 
-    public async execute() {
+    public async executeCommand() {
         const config = await this.loadConfig();
         const targetConfigs = await config.resolveFilteredConfigs({
             included: this.include,
@@ -718,7 +718,7 @@ export class ResetStateCommand extends BaseCommand {
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');
 
-    public async execute() {
+    public async executeCommand() {
         const config = await this.loadConfig();
         const targetConfigs = await config.resolveFilteredConfigs({
             included: this.include,
@@ -736,7 +736,7 @@ export class ValidateCommand extends BaseCommand {
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');
 
-    public async execute() {
+    public async executeCommand() {
         const config = await this.loadConfig();
         const targetConfigs = await config.resolveFilteredConfigs({
             included: this.include,

@@ -228,6 +228,20 @@ export function setStateValue(state: State, key: string | string[], value?: Stat
     }
 }
 
+export async function loadState(statePath: string) {
+    return await FS.pathExists(statePath)
+        ? await FS.readFile(statePath, 'utf8')
+            .then(content => JSON.parse(content))
+            .then(hash => StateSchema.parse(hash))
+        : {};
+}
+export async function saveState(statePath: string, state: State) {
+    await FS.ensureFile(statePath);
+
+    const content = JSON.stringify(state);
+    await FS.writeFile(statePath, content, 'utf8');
+}
+
 export async function loadV2Config(uri: string, settings: Settings, { cwd, parentConfig, parentSubmodule, pathspecPrefix, stdout, dryRun }: LoadRepoConfigParams & ExecParams = {}) {
     // stdout = stdout && TestTransform.create(stdout, Chalk.gray('[loadV2Config]'));
 
@@ -414,9 +428,10 @@ export type Element = {
 };
 export type NarrowedElement<T, N> = T extends { type: N } ? T : never;
 
-export type ConfigParams = Pick<Config, 'identifier' | 'upstreams' | 'submodules' | 'features' | 'releases' | 'hotfixes' | 'supports' | 'included' | 'excluded'> & Partial<Pick<Config, 'featureMessageTemplate' | 'releaseMessageTemplate' | 'hotfixMessageTemplate' | 'releaseTagTemplate' | 'hotfixTagTemplate' | 'isNew'>>;
+export type ConfigParams = Pick<Config, 'identifier' | 'upstreams' | 'submodules' | 'features' | 'releases' | 'hotfixes' | 'supports' | 'included' | 'excluded'> & Partial<Pick<Config, 'featureMessageTemplate' | 'releaseMessageTemplate' | 'hotfixMessageTemplate' | 'releaseTagTemplate' | 'hotfixTagTemplate' | 'isNew' | 'managed'>>;
 export class Config {
     public identifier: string;
+    public managed: boolean;
     public upstreams: Array<{ name: string, url: string }>;
     public submodules: Submodule[];
     public features: Feature[];
@@ -548,6 +563,7 @@ export class Config {
         this.hotfixTagTemplate = params.hotfixTagTemplate;
 
         this.isNew = params.isNew ?? false;
+        this.managed = params.managed ?? true;
     }
 
     // Register internals (initialize)
@@ -888,6 +904,14 @@ export class Config {
 
     // Initialize the config and its associated repo
     public async init({ stdout, dryRun }: ExecParams = {}) {
+        await this.setStateValue('configUri', this.sourceUri);
+
+        if (!this.managed) {
+            stdout?.write(Chalk.yellow("Repo not managed, bypassing\n"));
+            this.writeGitmodulesConfig({ stdout, dryRun });
+            return;
+        }
+
         // Either perform fetch for existing repo or clone/initialize new repo
         if (await FS.pathExists(this.path)) {
             if (await FS.pathExists(Path.resolve(this.path, '.git'))) {
@@ -978,23 +1002,8 @@ export class Config {
         //     this.createUpstream('origin', this.parentSubmodule.url, { stdout, dryRun });
 
         // Update .gitmodules config with submodules
-        if (!dryRun && this.submodules.length > 0) {
-            const gitmodulesPath = Path.join(this.path, '.gitmodules');
-
-            const gitmodulesStream = FS.createWriteStream(gitmodulesPath);
-            for (const repo of this.submodules) {
-                const resolvedPath = Path.posix.join(repo.path);
-
-                const originUpstream = repo.config.upstreams.find(u => u.name === 'origin');
-
-                gitmodulesStream.write(`[submodule "${repo.name}"]\n`);
-                gitmodulesStream.write(`    path = ${resolvedPath}\n`);
-                gitmodulesStream.write(`    url = "${originUpstream?.url ?? ''}"\n`);
-            }
-            gitmodulesStream.close();
-
-            stdout?.write(Chalk.gray(`Gitmodules config written to ${gitmodulesPath}\n`));
-        }
+        if (this.submodules.length > 0)
+            this.writeGitmodulesConfig({ stdout, dryRun });
 
         // // Initialize submodules
         // for (const submodule of this.submodules)
@@ -1018,6 +1027,27 @@ export class Config {
 
         // // Save updated config to disk
         // await this.save({ stdout, dryRun });
+    }
+
+    public writeGitmodulesConfig({ stdout, dryRun }: ExecParams = {}) {
+        if (dryRun)
+            return;
+
+        const gitmodulesPath = Path.join(this.path, '.gitmodules');
+
+        const gitmodulesStream = FS.createWriteStream(gitmodulesPath);
+        for (const repo of this.submodules) {
+            const resolvedPath = Path.posix.join(repo.path);
+
+            const originUpstream = repo.config.upstreams.find(u => u.name === 'origin');
+
+            gitmodulesStream.write(`[submodule "${repo.name}"]\n`);
+            gitmodulesStream.write(`    path = ${resolvedPath}\n`);
+            gitmodulesStream.write(`    url = "${originUpstream?.url ?? ''}"\n`);
+        }
+        gitmodulesStream.close();
+
+        stdout?.write(Chalk.gray(`Gitmodules config written to ${gitmodulesPath}\n`));
     }
 
     public async deleteFeature(feature: Feature) {
@@ -1163,18 +1193,12 @@ export class Config {
     public async loadState() {
         const statePath = Path.join(this.path, '.glf', 'state.json');
 
-        return await FS.pathExists(statePath)
-            ? await FS.readFile(statePath, 'utf8')
-                .then(content => JSON.parse(content))
-                .then(hash => StateSchema.parse(hash))
-            : {};
+        return loadState(statePath);
     }
     public async saveState(state: State) {
         const statePath = Path.join(this.path, '.glf', 'state.json');
-        await FS.ensureFile(statePath);
 
-        const content = JSON.stringify(state);
-        await FS.writeFile(statePath, content, 'utf8');
+        await saveState(statePath, state);
     }
 
     public async exec(cmd: string, { stdout, dryRun }: ExecParams = {}) {

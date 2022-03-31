@@ -30,7 +30,7 @@ export class CreateInteractiveCommand extends BaseCommand {
         category: 'Feature'
     });
 
-    public async execute() {
+    public async executeCommand() {
         Prompts.override({
             featureName: this.featureName,
             branchName: this.branchName,
@@ -100,7 +100,7 @@ export class CreateCommand extends BaseCommand {
         category: 'Feature'
     });
 
-    public async execute() {
+    public async executeCommand() {
         const rootConfig = await this.loadConfig();
         const targetConfigs = await rootConfig.resolveFilteredConfigs({
             included: this.include,
@@ -127,7 +127,7 @@ export class DeleteInteractiveCommand extends BaseCommand {
         category: 'Feature'
     });
 
-    public async execute() {
+    public async executeCommand() {
         const rootConfig = await this.loadConfig();
 
         await deleteFeature(rootConfig, {
@@ -156,7 +156,7 @@ export class CheckoutCommand extends BaseCommand {
         category: 'Feature'
     });
 
-    public async execute() {
+    public async executeCommand() {
         const config = await this.loadConfig();
         const featureFqn = config.resolveFeatureFqn(this.featureName);
 
@@ -178,7 +178,7 @@ export class CommitCommand extends BaseCommand {
         category: 'Feature'
     });
 
-    public async execute() {
+    public async executeCommand() {
         const config = await this.loadConfig();
         const featureFqn = config.resolveFeatureFqn(this.featureName);
 
@@ -201,7 +201,7 @@ export class SyncCommand extends BaseCommand {
         category: 'Feature'
     });
 
-    public async execute() {
+    public async executeCommand() {
         const config = await this.loadConfig();
         const featureFqn = config.resolveFeatureFqn(this.featureName);
 
@@ -235,7 +235,7 @@ export class MergeCommand extends BaseCommand {
         category: 'Feature'
     });
 
-    public async execute() {
+    public async executeCommand() {
         const config = await this.loadConfig();
         const featureFqn = config.resolveFeatureFqn(this.featureName);
 
@@ -280,7 +280,7 @@ export class CloseInteractiveCommand extends BaseCommand {
         category: 'Feature'
     });
 
-    public async execute() {
+    public async executeCommand() {
         const rootConfig = await this.loadConfig();
 
         await closeFeature(rootConfig, {

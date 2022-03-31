@@ -70,8 +70,10 @@ export class Lazy<T> {
     #resolved: boolean = false;
 
     public get value(): T {
-        if (!this.#resolved)
+        if (!this.#resolved) {
             this.#value = this.#handler();
+            this.#resolved = true;
+        }
 
         return this.#value;
     }

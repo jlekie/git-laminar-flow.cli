@@ -14,32 +14,26 @@ import { BaseCommand } from './common';
 import { loadV2Config, Config, Release, Support } from 'lib/config';
 import { createSupport, deleteSupport } from 'lib/actions';
 
+const AnswersSchema = Zod.string()
+    .transform(value => value.split('=', 2))
+    .transform(([pattern, value]) => ({ pattern, value }))
+    .array();
+
 export class CreateInteractiveCommand extends BaseCommand {
     static paths = [['support', 'create']];
-
-    supportName = Option.String('--name');
-    masterBranchName = Option.String('--master-branch-name');
-    developBranchName = Option.String('--develop-branch-name');
-    from = Option.String('--from');
 
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');
 
-    checkout = Option.String('--checkout', { validator: Typanion.isOneOf([ Typanion.isLiteral('master'), Typanion.isLiteral('develop') ]) });
+    answers = Option.Rest();
 
     static usage = Command.Usage({
         description: 'Create support',
         category: 'Support'
     });
 
-    public async execute() {
-        Prompts.override({
-            supportName: this.supportName,
-            masterBranchName: this.masterBranchName,
-            developBranchName: this.developBranchName,
-            from: this.from,
-            checkout: this.checkout
-        });
+    public async executeCommand() {
+        const answers = AnswersSchema.parse(this.answers);
 
         const rootConfig = await this.loadConfig();
         const targetConfigs = await rootConfig.resolveFilteredConfigs({
@@ -48,31 +42,47 @@ export class CreateInteractiveCommand extends BaseCommand {
         });
 
         await createSupport(rootConfig, {
-            name: () => this.prompt('supportName', Zod.string().nonempty(), {
+            name: () => this.createOverridablePrompt('supportName', Zod.string().nonempty(), {
                 type: 'text',
                 message: 'Support Name'
+            }, {
+                answers
             }),
-            from: ({ config }) => this.prompt('from', Zod.string().url(), {
+            from: ({ config }) => this.createOverridablePrompt('from', Zod.string().url(), (initial) => ({
                 type: 'text',
                 message: `[${Chalk.magenta(config.pathspec)}] From`,
-                initial: 'branch://master'
+                initial: initial ?? undefined
+            }), {
+                answers,
+                pathspecPrefix: config.pathspec,
+                defaultValue: 'branch://master'
             }),
-            masterBranchName: ({ config, supportName }) => this.prompt('masterBranchName', Zod.string(), {
+            masterBranchName: ({ config, supportName }) => this.createOverridablePrompt('masterBranchName', Zod.string(), (initial) => ({
                 type: 'text',
                 message: `[${Chalk.magenta(config.pathspec)}] Master Branch Name`,
-                initial: `support/${supportName}/master`
+                initial: initial ?? undefined
+            }), {
+                answers,
+                pathspecPrefix: config.pathspec,
+                defaultValue: `support/${supportName}/master`
             }),
-            developBranchName: ({ config, supportName }) => this.prompt('developBranchName', Zod.string(), {
+            developBranchName: ({ config, supportName }) => this.createOverridablePrompt('developBranchName', Zod.string(), (initial) => ({
                 type: 'text',
                 message: `[${Chalk.magenta(config.pathspec)}] Develop Branch Name`,
-                initial: `support/${supportName}/develop`
+                initial: initial ?? undefined
+            }), {
+                answers,
+                pathspecPrefix: config.pathspec,
+                defaultValue: `support/${supportName}/develop`
             }),
-            configs: ({ configs }) => this.prompt('configs', Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()), {
+            configs: ({ configs }) => this.createOverridablePrompt('configs', Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()), {
                 type: 'multiselect',
                 message: 'Select Modules',
                 choices: configs.map(c => ({ title: c.pathspec, value: c.identifier, selected: targetConfigs.some(tc => tc.identifier === c.identifier) }))
+            }, {
+                answers
             }),
-            checkout: ({ config }) => this.prompt('checkout', Zod.union([ Zod.literal('master'), Zod.literal('develop') ]).nullable().optional(), {
+            checkout: ({ config }) => this.createOverridablePrompt('checkout', Zod.union([ Zod.literal('master'), Zod.literal('develop') ]).nullable().optional(), {
                 type: 'select',
                 message: `[${Chalk.magenta(config.pathspec)}] Checkout`,
                 choices: [
@@ -80,12 +90,20 @@ export class CreateInteractiveCommand extends BaseCommand {
                     { title: 'Master', value: 'master' },
                     { title: 'Develop', value: 'develop' }
                 ]
+            }, {
+                answers,
+                pathspecPrefix: config.pathspec,
+                defaultValue: null
             }),
-            activate: ({ config }) => this.prompt('activate', Zod.boolean(), {
+            activate: ({ config }) => this.createOverridablePrompt('activate', Zod.boolean(), {
                 type: 'confirm',
                 message: `[${Chalk.magenta(config.pathspec)}] Activate`
+            }, {
+                answers,
+                pathspecPrefix: config.pathspec,
+                defaultValue: false
             }),
-            upstream: ({ config }) => this.prompt('upstream', Zod.string().nullable().transform(v => v ?? undefined), {
+            upstream: ({ config }) => this.createOverridablePrompt('upstream', Zod.string().nullable().transform(v => v ?? undefined), {
                 type: 'select',
                 message: `[${Chalk.magenta(config.pathspec)}] Upstream`,
                 choices: [
@@ -93,6 +111,10 @@ export class CreateInteractiveCommand extends BaseCommand {
                     ...config.upstreams.map(u => ({ title: u.name, value: u.name }))
                 ],
                 initial: config.upstreams.length > 0 ? 1 : 0
+            }, {
+                answers,
+                pathspecPrefix: config.pathspec,
+                defaultValue: config.upstreams[0]?.name ?? null
             }),
             stdout: this.context.stdout,
             dryRun: this.dryRun
@@ -117,7 +139,7 @@ export class CreateCommand extends BaseCommand {
         category: 'Support'
     });
 
-    public async execute() {
+    public async executeCommand() {
         const rootConfig = await this.loadConfig();
         const targetConfigs = await rootConfig.resolveFilteredConfigs({
             included: this.include,
@@ -148,7 +170,7 @@ export class DeleteInteractiveCommand extends BaseCommand {
         category: 'Support'
     });
 
-    public async execute() {
+    public async executeCommand() {
         const rootConfig = await this.loadConfig();
 
         await deleteSupport(rootConfig, {
@@ -182,7 +204,7 @@ export class ActivateCommand extends BaseCommand {
         category: 'Support'
     });
 
-    public async execute() {
+    public async executeCommand() {
         const config = await this.loadConfig();
         const targetConfigs = await config.resolveFilteredConfigs({
             included: this.include,

@@ -9,15 +9,29 @@ import * as Path from 'path';
 
 import * as Prompts from 'prompts';
 
+import * as Minimatch from 'minimatch';
+
 import { loadSettings } from 'lib/settings';
-import { loadV2Config } from 'lib/config';
+import { loadV2Config, getStateValue, loadState } from 'lib/config';
 
 export abstract class BaseCommand extends Command {
     dryRun = Option.Boolean('--dry-run');
-    configPath = Option.String('--config', 'branch://gitflow');
+    configPath = Option.String('--config');
     settingsPath = Option.String('--settings', Path.resolve(OS.homedir(), '.glf/cli.yml'));
 
-    abstract execute(): Promise<number | void>;
+    public async execute() {
+        return this.executeCommand().catch(err => {
+            if (err instanceof Zod.ZodError)
+                this.logError(`Zod validation failure: ${err.stack}`)
+            else if (err instanceof Error)
+                this.logError(`Command fault: ${err.stack}`)
+            else
+                this.logError(`Command fault: ${err}`)
+
+            return 2;
+        })
+    }
+    abstract executeCommand(): Promise<number | void>;
 
     protected logVerbose(message: string) {
         this.context.stdout.write(`${Chalk.gray(message)}\n`)
@@ -39,10 +53,21 @@ export abstract class BaseCommand extends Command {
     protected async loadSettings() {
         return loadSettings(this.settingsPath);
     }
+
+    protected async resolveConfigPath() {
+        const state = await loadState(Path.resolve('.glf', 'state.json'));
+
+        return this.configPath ?? getStateValue(state, 'configUri', 'string');
+    }
     protected async loadConfig() {
         const settings = await loadSettings(this.settingsPath);
+        const state = await loadState(Path.resolve('.glf', 'state.json'));
 
-        return loadV2Config(this.configPath, settings, { stdout: this.context.stdout, dryRun: this.dryRun })
+        const configPath = this.configPath ?? getStateValue(state, 'configUri', 'string');
+        if (!configPath)
+            throw new Error('Must specify a config URI');
+
+        return loadV2Config(configPath, settings, { stdout: this.context.stdout, dryRun: this.dryRun })
     }
 
     // protected async prompt<T extends Zod.ZodRawShape>(params: T, promptOptions: Prompts.PromptObject<keyof T & string>) {
@@ -66,20 +91,74 @@ export abstract class BaseCommand extends Command {
             return parsedInputs;
     }
 
-    protected async prompt<N extends string, T extends Zod.ZodTypeAny>(name: N, Schema: T, prompt: Omit<Prompts.PromptObject<N>, 'name'>): Promise<Zod.infer<T>> {
+    protected prompt<N extends string>(name: N, prompt: Omit<Prompts.PromptObject<N>, 'name'>): Promise<Prompts.Answers<N>>;
+    protected prompt<N extends string, T extends Zod.ZodTypeAny>(name: N, Schema: T, prompt: Omit<Prompts.PromptObject<N>, 'name'>): Promise<Zod.infer<T>>;
+    protected async prompt<N extends string, T extends Zod.ZodTypeAny>(name: N, ...args: readonly [Omit<Prompts.PromptObject<N>, 'name'>] | readonly [T, Omit<Prompts.PromptObject<N>, 'name'>]): Promise<Zod.infer<T>> {
+        const { prompt, Schema } = (() => {
+            if (args.length === 1) {
+                return { prompt: args[0], Schema: undefined }
+            }
+            else if (args.length === 2) {
+                return { prompt: args[1], Schema: args[0] }
+            }
+            else {
+                throw new Error('Invalid arguments');
+            }
+        })();
+
         const params = await Prompts({
             ...prompt,
-            name
+            name,
+            stdin: this.context.stdin,
+            stdout: this.context.stdout
         });
 
         try {
-            return Schema.parse(params[name]);
+            if (Schema)
+                return Schema.parse(params[name]);
+            else
+                return params[name];
         }
         catch (err) {
             if (err instanceof Zod.ZodError)
                 throw new Error(`Input validation failed (${params[name]}): ${err.errors.map(e => e.message).join(', ')}`)
             else
                 throw err;
+        }
+    }
+
+    protected async createOverridablePrompt<T extends Zod.ZodTypeAny>(name: string, Schema: T, prompt: Omit<Prompts.PromptObject<"from">, "name"> | ((defaultValue?: Prompts.InitialReturnValue | null) => Omit<Prompts.PromptObject<"from">, "name">), { answers = [], pathspecPrefix, defaultValue }: Partial<{ answers: { pattern: string, value: string }[], pathspecPrefix: string, defaultValue: Prompts.InitialReturnValue | null }> = {}): Promise<Zod.infer<T>> {
+        const findAnswerValue = (pathspec: string) => {
+            const answer = answers.find(a => Minimatch(pathspec, a.pattern));
+            if (!answer)
+                return;
+
+            const value = (() => {
+                if (answer.value === '<DEFAULT>')
+                    return defaultValue;
+                else if (answer.value === '<TRUE>')
+                    return true;
+                else if (answer.value === '<FALSE>')
+                    return false;
+                else if (answer.value === '<NULL>')
+                    return null;
+                else if (answer.value === '<ASK>')
+                    return undefined;
+                else
+                    return answer.value;
+            })();
+
+            this.context.stdout.write(Chalk.gray(`Using matching answer value "${value}" for ${pathspec}\n`));
+            return value;
+        }
+
+        const answerValue = findAnswerValue(pathspecPrefix ? `${pathspecPrefix}/${name}` : name);
+        if (answerValue !== undefined) {
+            return Schema.parse(answerValue)
+        }
+        else {
+            const promptValue = await this.prompt(name, _.isFunction(prompt) ? prompt(defaultValue) : prompt);
+            return Schema.parse(promptValue);
         }
     }
 }

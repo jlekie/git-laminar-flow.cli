@@ -19,6 +19,10 @@ export type ActionParams<T> = CommonParams & {
         ? (Required<T>[K] extends ActionParam<infer RT, infer PT> ? ActionParam<RT, PT> : () => T[K] | Promise<T[K]>)
         : T[K] extends ActionParam<infer RT, infer PT> ? ActionParam<RT, PT> : () => T[K] | Promise<T[K]>
 }
+export type ActionParamResult<T> = T extends (...args: any) => any ? ReturnType<T> : T;
+export type ActionParamResults<T> = {
+    [K in keyof T]: Awaited<ActionParamResult<T[K]>>;
+}
 
 async function resolveFromArtifacts(config: Config, from: string) {
     const fromElement = await config.parseElement(from);
@@ -52,7 +56,7 @@ export async function createFeature(rootConfig: Config, { stdout, dryRun, ...par
 }>) {
     const featureName = await params.name();
 
-    const allConfigs = rootConfig.flattenConfigs();
+    const allConfigs = rootConfig.flattenConfigs().filter(c => c.managed);
     const configs = await params.configs({ configs: allConfigs });
     for (const config of configs) {
         if (config.features.some(f => f.name === featureName)) {
@@ -95,7 +99,7 @@ export async function createRelease(rootConfig: Config, { stdout, dryRun, ...par
 }>) {
     const releaseName = await params.name();
 
-    const allConfigs = rootConfig.flattenConfigs();
+    const allConfigs = rootConfig.flattenConfigs().filter(c => c.managed);
     const configs = await params.configs({ configs: allConfigs });
     for (const config of configs) {
         if (config.releases.some(f => f.name === releaseName)) {
@@ -139,7 +143,7 @@ export async function createHotfix(rootConfig: Config, { stdout, dryRun, ...para
 }>) {
     const hotfixName = await params.name();
 
-    const allConfigs = rootConfig.flattenConfigs();
+    const allConfigs = rootConfig.flattenConfigs().filter(c => c.managed);
     const configs = await params.configs({ configs: allConfigs });
     for (const config of configs) {
         if (config.hotfixes.some(f => f.name === hotfixName)) {
@@ -184,26 +188,44 @@ export async function createSupport(rootConfig: Config, { stdout, dryRun, ...par
 }>) {
     const supportName = await params.name();
 
-    const allConfigs = rootConfig.flattenConfigs();
+    const allConfigs = rootConfig.flattenConfigs().filter(c => c.managed);
     const configs = await params.configs({ configs: allConfigs });
+
+    const resolvedConfigParams: Record<string, ActionParamResults<Omit<typeof params, 'name' | 'configs'>>> = {};
     for (const config of configs) {
+        resolvedConfigParams[config.identifier] = {
+            masterBranchName: await params.masterBranchName({ config, supportName }),
+            developBranchName: await params.developBranchName({ config, supportName }),
+            from: await params.from?.({ config }),
+            upstream: await params.upstream?.({ config }),
+            checkout: await params.checkout?.({ config }),
+            activate: await params.activate?.({ config })
+        };
+    }
+
+    await Bluebird.map(configs, async config => {
         if (config.supports.some(f => f.name === supportName)) {
             stdout?.write(Chalk.gray(`[${Chalk.magenta(config.pathspec)}] Support ${supportName} already exists; bypassing`) + '\n');
-            continue;
+            return;
         }
 
-        const from = await params.from?.({ config }) ?? 'branch://master';
-        const [ fromElement, fromBranch ] = await resolveFromArtifacts(config, from);
+        const {
+            from = 'branch://master',
+            developBranchName,
+            masterBranchName,
+            upstream,
+            checkout,
+            activate
+        } = resolvedConfigParams[config.identifier];
 
-        const masterBranchName = await params.masterBranchName({ config, supportName });
-        const developBranchName = await params.developBranchName({ config, supportName });
+        const [ fromElement, fromBranch ] = await resolveFromArtifacts(config, from);
 
         const support = new Support({
             name: supportName,
             masterBranchName,
             developBranchName,
             sourceSha: await config.resolveCommitSha(fromBranch),
-            upstream: await params.upstream?.({ config }),
+            upstream,
             features: [],
             releases: [],
             hotfixes: []
@@ -214,15 +236,14 @@ export async function createSupport(rootConfig: Config, { stdout, dryRun, ...par
         await support.init({ stdout: stdout, dryRun: dryRun });
         await config.save({ stdout: stdout, dryRun: dryRun });
 
-        const checkout = await params.checkout?.({ config });
         if (checkout === 'develop')
             await config.checkoutBranch(support.developBranchName, { stdout: stdout, dryRun: dryRun });
         else if (checkout === 'master')
             await config.checkoutBranch(support.masterBranchName, { stdout: stdout, dryRun: dryRun });
 
-        if (await params.activate?.({ config}))
+        if (activate)
             await config.setStateValue('activeSupport', supportName);
-    }
+    });
 }
 
 export async function deleteFeature(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
