@@ -7,12 +7,12 @@ import * as Zod from 'zod';
 import * as Chalk from 'chalk';
 import * as Prompts from 'prompts';
 
-import { BaseCommand } from './common';
+import { BaseCommand, BaseInteractiveCommand } from './common';
 
 import { loadV2Config, Config, Release, Support } from 'lib/config';
 import { closeRelease, createRelease, deleteRelease } from 'lib/actions';
 
-export class CreateInteractiveCommand extends BaseCommand {
+export class CreateInteractiveCommand extends BaseInteractiveCommand {
     static paths = [['release', 'create'], ['create', 'release']];
 
     releaseName = Option.String('--name');
@@ -119,7 +119,7 @@ export class CreateCommand extends BaseCommand {
     }
 }
 
-export class DeleteInteractiveCommand extends BaseCommand {
+export class DeleteInteractiveCommand extends BaseInteractiveCommand {
     static paths = [['release', 'delete'], ['delete', 'release']];
 
     static usage = Command.Usage({
@@ -234,7 +234,7 @@ export class MergeCommand extends BaseCommand {
     }
 }
 
-export class CloseInteractiveCommand extends BaseCommand {
+export class CloseInteractiveCommand extends BaseInteractiveCommand {
     static paths = [['release', 'close'], ['close', 'release']];
 
     abort = Option.Boolean('--abort,--finish', false);

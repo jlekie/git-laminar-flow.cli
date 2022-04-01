@@ -22,6 +22,8 @@ cli.register(RepoCommands.CloseCommand);
 cli.register(RepoCommands.ListCommand);
 cli.register(RepoCommands.CreateCommand);
 cli.register(RepoCommands.ResetStateCommand);
+cli.register(RepoCommands.CommitCommand);
+cli.register(RepoCommands.GenerateWorkspaceCommand);
 
 cli.register(SubmoduleCommands.CloneCommand);
 

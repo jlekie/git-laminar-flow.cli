@@ -58,25 +58,34 @@ export async function createFeature(rootConfig: Config, { stdout, dryRun, ...par
 
     const allConfigs = rootConfig.flattenConfigs().filter(c => c.managed);
     const configs = await params.configs({ configs: allConfigs });
-    for (const config of configs) {
-        if (config.features.some(f => f.name === featureName)) {
-            stdout?.write(Chalk.gray(`[${Chalk.magenta(config.pathspec)}] Feature ${featureName} already exists; bypassing`) + '\n');
-            continue;
-        }
 
+    await Bluebird.map(Bluebird.mapSeries(configs, async config => {
         const activeSupport = await config.getStateValue('activeSupport', 'string');
-
         const from = await params.from?.({ config, activeSupport }) ?? 'branch://develop';
         const [ fromElement, fromBranch ] = await resolveFromArtifacts(config, from);
 
-        const branchName = await params.branchName({ config, fromElement, featureName });
+        return {
+            config,
+            branchName: await params.branchName({ config, featureName, fromElement }),
+            from,
+            upstream: await params.upstream?.({ config }),
+            checkout: await params.checkout?.({ config })
+        };
+    }), async ({ config, from, branchName, upstream, checkout }) => {
+        if (config.features.some(f => f.name === featureName)) {
+            stdout?.write(Chalk.gray(`[${Chalk.magenta(config.pathspec)}] Feature ${featureName} already exists; bypassing`) + '\n');
+            return;
+        }
+
+        const [ fromElement, fromBranch ] = await resolveFromArtifacts(config, from);
+
         const source = fromElement.type === 'support' ? fromElement.support : config;
 
         const feature = new Feature({
             name: featureName,
             branchName,
             sourceSha: await config.resolveCommitSha(fromBranch),
-            upstream: await params.upstream?.({ config })
+            upstream
         });
         source.features.push(feature);
         await feature.register(config, source instanceof Support ? source : undefined);
@@ -84,9 +93,9 @@ export async function createFeature(rootConfig: Config, { stdout, dryRun, ...par
         await feature.init({ stdout: stdout, dryRun: dryRun });
         await config.save({ stdout: stdout, dryRun: dryRun });
 
-        if (await params.checkout?.({ config }))
+        if (checkout)
             await config.checkoutBranch(feature.branchName, { stdout: stdout, dryRun: dryRun });
-    }
+    });
 }
 export async function createRelease(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
     name: ActionParam<string>;
@@ -191,32 +200,19 @@ export async function createSupport(rootConfig: Config, { stdout, dryRun, ...par
     const allConfigs = rootConfig.flattenConfigs().filter(c => c.managed);
     const configs = await params.configs({ configs: allConfigs });
 
-    const resolvedConfigParams: Record<string, ActionParamResults<Omit<typeof params, 'name' | 'configs'>>> = {};
-    for (const config of configs) {
-        resolvedConfigParams[config.identifier] = {
-            masterBranchName: await params.masterBranchName({ config, supportName }),
-            developBranchName: await params.developBranchName({ config, supportName }),
-            from: await params.from?.({ config }),
-            upstream: await params.upstream?.({ config }),
-            checkout: await params.checkout?.({ config }),
-            activate: await params.activate?.({ config })
-        };
-    }
-
-    await Bluebird.map(configs, async config => {
+    await Bluebird.map(Bluebird.mapSeries(configs, async config => ({
+        config,
+        masterBranchName: await params.masterBranchName({ config, supportName }),
+        developBranchName: await params.developBranchName({ config, supportName }),
+        from: await params.from?.({ config }) ?? 'branch://master',
+        upstream: await params.upstream?.({ config }),
+        checkout: await params.checkout?.({ config }),
+        activate: await params.activate?.({ config })
+    })), async ({ config, from, masterBranchName, developBranchName, upstream, checkout, activate }) => {
         if (config.supports.some(f => f.name === supportName)) {
             stdout?.write(Chalk.gray(`[${Chalk.magenta(config.pathspec)}] Support ${supportName} already exists; bypassing`) + '\n');
             return;
         }
-
-        const {
-            from = 'branch://master',
-            developBranchName,
-            masterBranchName,
-            upstream,
-            checkout,
-            activate
-        } = resolvedConfigParams[config.identifier];
 
         const [ fromElement, fromBranch ] = await resolveFromArtifacts(config, from);
 
@@ -539,4 +535,25 @@ export async function syncFeature(rootConfig: Config, { stdout, dryRun, ...param
 
         await config.save({ stdout: stdout, dryRun: dryRun });
     }
+}
+
+export async function commit(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
+    configs: ActionParam<Config[], { configs: Config[] }>;
+    message: ActionParam<string, { config: Config }>;
+    stage?: ActionParam<boolean, { config: Config }>;
+}>) {
+    const allConfigs = await Bluebird.filter(rootConfig.flattenConfigs(), config => config.isDirty({ stdout, dryRun }));
+    if (!allConfigs.length)
+        return;
+    
+    const configs = await params.configs({ configs: allConfigs });
+    await Bluebird.map(Bluebird.mapSeries(configs, async config => {
+        return {
+            config,
+            message: await params.message({ config })
+        };
+    }), async ({ config, message }) => {
+        await config.stage({ stdout, dryRun });
+        await config.commit(message, { stdout, dryRun });
+    });
 }

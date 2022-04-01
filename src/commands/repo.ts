@@ -4,6 +4,7 @@ import * as Bluebird from 'bluebird';
 import * as _ from 'lodash';
 import * as Chalk from 'chalk';
 import Table = require('cli-table');
+import * as Zod from 'zod';
 
 import * as FS from 'fs-extra';
 import * as Path from 'path';
@@ -14,10 +15,11 @@ import { URL } from 'url';
 
 import { parseElementUri } from '@jlekie/git-laminar-flow';
 
-import { BaseCommand } from './common';
+import { BaseCommand, BaseInteractiveCommand } from './common';
 
 import { loadV2Config, Config, Feature, StateProxy, Support } from 'lib/config';
 import { loadState } from 'lib/state';
+import { commit } from 'lib/actions';
 
 export class InitCommand extends BaseCommand {
     static paths = [['init']];
@@ -99,6 +101,50 @@ export class CheckoutCommand extends BaseCommand {
     }
 }
 
+export class CommitCommand extends BaseInteractiveCommand {
+    static paths = [['commit']];
+
+    include = Option.Array('--include');
+    exclude = Option.Array('--exclude');
+
+    static usage = Command.Usage({
+        description: 'Commit'
+    });
+
+    public async executeCommand() {
+        const rootConfig = await this.loadConfig();
+        const targetConfigs = await rootConfig.resolveFilteredConfigs({
+            included: this.include,
+            excluded: this.exclude
+        });
+
+        await commit(rootConfig, {
+            configs: async ({ configs }) => this.createOverridablePrompt('configs', Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()), {
+                type: 'multiselect',
+                message: 'Select Modules',
+                choices: await Bluebird.map(configs, async c => ({ title: `${c.pathspec} [${Chalk.magenta(await c.resolveCurrentBranch({ stdout: this.context.stdout, dryRun: this.dryRun }))}]`, value: c.identifier, selected: targetConfigs.some(tc => tc.identifier === c.identifier) }))
+            }),
+            message: ({ config }) => this.createOverridablePrompt('message', Zod.string().nonempty(), (initial) => ({
+                type: 'text',
+                message: `[${Chalk.magenta(config.pathspec)}] Commit Message`,
+                initial
+            }), {
+                pathspecPrefix: config.pathspec,
+                defaultValue: 'checkpoint'
+            }),
+            stage: ({ config }) => this.createOverridablePrompt('stage', Zod.boolean(), {
+                type: 'confirm',
+                message: `[${Chalk.magenta(config.pathspec)}] Stage All Changes`,
+            }, {
+                pathspecPrefix: config.pathspec,
+                defaultValue: false
+            }),
+            stdout: this.context.stdout,
+            dryRun: this.dryRun
+        });
+    }
+}
+
 export class FetchCommand extends BaseCommand {
     static paths = [['fetch']];
 
@@ -120,10 +166,9 @@ export class FetchCommand extends BaseCommand {
     }
 }
 
-export class ExecCommand extends BaseCommand {
+export class ExecCommand extends BaseInteractiveCommand {
     static paths = [['exec']];
 
-    cmd = Option.String('--cmd', { required: true })
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');
 
@@ -132,17 +177,27 @@ export class ExecCommand extends BaseCommand {
     });
 
     public async executeCommand() {
-        const config = await this.loadConfig();
-        const targetConfigs = await config.resolveFilteredConfigs({
+        const rootConfig = await this.loadConfig();
+        const targetConfigs = await rootConfig.resolveFilteredConfigs({
             included: this.include,
             excluded: this.exclude
         });
 
-        for (const config of targetConfigs)
-            await config.exec(this.cmd, { stdout: this.context.stdout, dryRun: this.dryRun });
-        // await Bluebird.map(targetConfigs, config => config.exec('dir', { stdout: this.context.stdout, dryRun: this.dryRun }), {
-        //     concurrency: 1
-        // });
+        const allConfigs = rootConfig.flattenConfigs();
+        const configs = await this.createOverridablePrompt('configs', Zod.string().array().transform(ids => _(ids).map(id => allConfigs.find(c => c.identifier === id)).compact().value()), {
+            type: 'multiselect',
+            message: 'Select Modules',
+            choices: allConfigs.map(c => ({ title: c.pathspec, value: c.identifier, selected: targetConfigs.some(tc => tc.identifier === c.identifier) }))
+        });
+
+        const cmd = await this.createOverridablePrompt('cmd', Zod.string().nonempty(), {
+            type: 'text',
+            message: 'Command'
+        });
+
+        await Bluebird.map(configs, config => config.exec(cmd, { stdout: this.context.stdout, dryRun: this.dryRun }).catch(err => {
+            this.logError(`[${Chalk.magenta(config.pathspec)}] ${err}`);
+        }));
     }
 }
 
@@ -745,5 +800,66 @@ export class ValidateCommand extends BaseCommand {
 
         for (const config of targetConfigs)
             await config.saveState({});
+    }
+}
+
+const WorkspaceSchema = Zod.object({
+    folders: Zod.object({
+        name: Zod.string(),
+        path: Zod.string(),
+        glfIdentifier: Zod.string().optional()
+    }).array().optional(),
+    settings: Zod.record(Zod.any()).optional()
+});
+export class GenerateWorkspaceCommand extends BaseInteractiveCommand {
+    static paths = [['vscode', 'generate-workspace']];
+
+    include = Option.Array('--include');
+    exclude = Option.Array('--exclude');
+
+    public async executeCommand() {
+        const rootConfig = await this.loadConfig();
+        const allConfigs = rootConfig.flattenConfigs();
+        const targetConfigs = await rootConfig.resolveFilteredConfigs({
+            included: this.include,
+            excluded: this.exclude
+        });
+
+        const workspaceName = await this.createOverridablePrompt('name', Zod.string().nonempty(), {
+            type: 'text',
+            message: 'Workspace Name'
+        });
+        const workspacePath = Path.resolve(`${workspaceName}.code-workspace`);
+
+        const configs = await this.createOverridablePrompt('configs', Zod.string().array().transform(ids => _(ids).map(id => allConfigs.find(c => c.identifier === id)).compact().value()), {
+            type: 'multiselect',
+            message: 'Select Modules',
+            choices: allConfigs.map(c => ({ title: c.pathspec, value: c.identifier, selected: targetConfigs.some(tc => tc.identifier === c.identifier) }))
+        });
+
+        const workspace = WorkspaceSchema.parse(await FS.pathExists(workspacePath) ? await FS.readJson(workspacePath) : {});
+        workspace.folders = workspace.folders ?? [];
+
+        for (const config of configs) {
+            const name = config.pathspec === 'root' ? 'Workspace' : config.pathspec.replace('root/', '').replace(/\//g, ' / ');
+            const path = './' + Path.relative(Path.dirname(workspacePath), config.path).replace(/\\/g, '/');
+
+            const existingFolder = workspace.folders.find(f => f.glfIdentifier === config.identifier);
+            if (existingFolder) {
+                existingFolder.name = name;
+                existingFolder.path = path;
+            }
+            else {
+                workspace.folders.push({
+                    name,
+                    path,
+                    glfIdentifier: config.identifier
+                });
+            }
+        }
+
+        await FS.writeJson(workspacePath, workspace, {
+            spaces: 2
+        });
     }
 }

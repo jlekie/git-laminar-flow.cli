@@ -8,12 +8,12 @@ import * as Chalk from 'chalk';
 
 import * as Prompts from 'prompts';
 
-import { BaseCommand } from './common';
+import { BaseCommand, BaseInteractiveCommand } from './common';
 
 import { loadV2Config, Config, Release, Hotfix, Support } from 'lib/config';
 import { createHotfix, deleteHotfix } from 'lib/actions';
 
-export class CreateInteractiveCommand extends BaseCommand {
+export class CreateInteractiveCommand extends BaseInteractiveCommand {
     static paths = [['hotfix', 'create']];
 
     featureName = Option.String('--name');
@@ -120,10 +120,8 @@ export class CreateCommand extends BaseCommand {
     }
 }
 
-export class DeleteInteractiveCommand extends BaseCommand {
+export class DeleteInteractiveCommand extends BaseInteractiveCommand {
     static paths = [['hotfix', 'delete']];
-
-    names = Option.Rest({ required: 1 });
 
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');

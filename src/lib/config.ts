@@ -1208,6 +1208,9 @@ export class Config {
     public async fetch({ stdout, dryRun }: ExecParams = {}) {
         await exec(`git fetch --all`, { cwd: this.path, stdout, dryRun });
     }
+    public async stage({ stdout, dryRun }: ExecParams = {}) {
+        await exec(`git add .`, { cwd: this.path, stdout, dryRun });
+    }
     public async commit(message: string, { amend, stdout, dryRun }: ExecParams & CommitParams = {}) {
         await exec(`git commit -m "${message}"${amend ? ' --amend' : ''}`, { cwd: this.path, stdout, dryRun });
     }
@@ -1257,7 +1260,7 @@ export class Config {
     public async isDirty({ stdout, dryRun }: ExecParams = {}) {
         await exec(`git update-index --refresh`, { cwd: this.path, stdout, dryRun }).catch(() => {});
 
-        return await exec(`git diff-index --quiet HEAD`, { cwd: this.path, stdout, dryRun })
+        return await execCmd(`git diff-index --quiet HEAD`, { cwd: this.path, stdout, dryRun })
             .then(() => false)
             .catch(() => true);
     }
