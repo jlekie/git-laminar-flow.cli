@@ -136,14 +136,17 @@ export abstract class BaseCommand extends Command {
 
 export abstract class BaseInteractiveCommand extends BaseCommand {
     rawAnswers = Option.Rest({ name: 'answers' });
+    defaultAll = Option.Boolean('--default-all');
 
     #answers = new Lazy(() => AnswersSchema.parse(this.rawAnswers))
     public get answers() {
         return this.#answers.value;
     }
 
-    protected async createOverridablePrompt<T extends Zod.ZodTypeAny>(name: string, Schema: T, prompt: Omit<Prompts.PromptObject<"from">, "name"> | ((defaultValue?: Prompts.InitialReturnValue) => Omit<Prompts.PromptObject<"from">, "name">), { answers = [], pathspecPrefix, defaultValue }: Partial<{ answers: { pattern: string, value: string }[], pathspecPrefix: string, defaultValue: Prompts.InitialReturnValue | null }> = {}): Promise<Zod.infer<T>> {
-        const allAnswers = [ ...this.answers, ...answers ];
+    protected async createOverridablePrompt<T extends Zod.ZodTypeAny, D = Prompts.InitialReturnValue>(name: string, Schema: T, prompt: Omit<Prompts.PromptObject<"from">, "name"> | ((defaultValue?: D) => Omit<Prompts.PromptObject<"from">, "name">), { answers = [], pathspecPrefix, defaultValue }: Partial<{ answers: { pattern: string, value: string }[], pathspecPrefix: string, defaultValue: D }> = {}): Promise<Zod.infer<T>> {
+        const allAnswers = _.reverse([ ...this.answers, ...answers ]);
+        if (this.defaultAll)
+            allAnswers.push({ pattern: '**', value: '<DEFAULT>' });
 
         const findAnswerValue = (pathspec: string) => {
             const answer = allAnswers.find(a => Minimatch(pathspec, a.pattern));

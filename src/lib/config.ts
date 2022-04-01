@@ -428,7 +428,7 @@ export type Element = {
 };
 export type NarrowedElement<T, N> = T extends { type: N } ? T : never;
 
-export type ConfigParams = Pick<Config, 'identifier' | 'upstreams' | 'submodules' | 'features' | 'releases' | 'hotfixes' | 'supports' | 'included' | 'excluded'> & Partial<Pick<Config, 'featureMessageTemplate' | 'releaseMessageTemplate' | 'hotfixMessageTemplate' | 'releaseTagTemplate' | 'hotfixTagTemplate' | 'isNew' | 'managed'>>;
+export type ConfigParams = Pick<Config, 'identifier' | 'upstreams' | 'submodules' | 'features' | 'releases' | 'hotfixes' | 'supports' | 'included' | 'excluded'> & Partial<Pick<Config, 'featureMessageTemplate' | 'releaseMessageTemplate' | 'hotfixMessageTemplate' | 'releaseTagTemplate' | 'hotfixTagTemplate' | 'isNew' | 'managed' | 'tags'>>;
 export class Config {
     public identifier: string;
     public managed: boolean;
@@ -445,6 +445,7 @@ export class Config {
     public hotfixMessageTemplate?: string;
     public releaseTagTemplate?: string;
     public hotfixTagTemplate?: string;
+    public tags: string[];
 
     public readonly isNew: boolean;
 
@@ -524,7 +525,8 @@ export class Config {
             hotfixes: value.hotfixes?.map(i => Hotfix.fromSchema(i)) ?? [],
             supports: value.supports?.map(i => Support.fromSchema(i)) ?? [],
             included: value.included?.slice() ?? [],
-            excluded: value.excluded?.slice() ?? []
+            excluded: value.excluded?.slice() ?? [],
+            tags: value.tags?.slice() ?? []
         });
 
         return config;
@@ -542,6 +544,7 @@ export class Config {
             supports: [],
             included: [],
             excluded: [],
+            tags: [],
             isNew: true
         });
     }
@@ -564,6 +567,8 @@ export class Config {
 
         this.isNew = params.isNew ?? false;
         this.managed = params.managed ?? true;
+
+        this.tags = params.tags ?? [];
     }
 
     // Register internals (initialize)
@@ -626,14 +631,19 @@ export class Config {
                 else if (type === 'hotfix') {
                     return artifact.type === 'hotfix' && Minimatch(artifact.hotfix.name, pattern);
                 }
+                else if (type === 'tag') {
+                    const tags = [ ...this.tags, ...(this.parentSubmodule?.tags ?? []) ];
+                    return tags.some(tag => Minimatch(tag, pattern));
+                }
             }
 
             return false;
         }
+        const matchAll = async (uris: string[]) => _.every(await Bluebird.map(uris, uri => match(uri)));
 
         const included = params.included ?? rootConfig.included;
         const excluded = params.excluded ?? rootConfig.excluded;
-        if (((!included || !included.length) || await Bluebird.any(included.map(uri => match(uri)))) && ((!excluded || !excluded.length) || !await Bluebird.any(excluded.map(uri => match(uri)))))
+        if (((!included || !included.length) || await Bluebird.any(included.map(uri => matchAll(uri.split(';'))))) && ((!excluded || !excluded.length) || !await Bluebird.any(excluded.map(uri => matchAll(uri.split(';'))))))
             configs.push(this);
 
         for (const submodule of this.submodules)
@@ -1329,11 +1339,12 @@ export class Config {
 export interface Config extends ConfigBase {}
 applyMixins(Config, [ ConfigBase ]);
 
-export type SubmoduleParams = Pick<Submodule, 'name' | 'path' | 'url'>;
+export type SubmoduleParams = Pick<Submodule, 'name' | 'path' | 'url'> & Partial<Pick<Submodule, 'tags'>>;
 export class Submodule {
     public name: string;
     public path: string;
     public url?: string;
+    public tags: string[];
 
     #initialized: boolean = false;
 
@@ -1358,7 +1369,8 @@ export class Submodule {
     }
     public static fromSchema(value: Zod.infer<typeof ConfigSubmoduleSchema>) {
         return new this({
-            ...value
+            ...value,
+            tags: value.tags?.slice() ?? []
         });
     }
 
@@ -1366,6 +1378,7 @@ export class Submodule {
         this.name = params.name;
         this.path = params.path;
         this.url = params.url;
+        this.tags = params.tags ?? [];
     }
 
     public async register(parentConfig: Config) {

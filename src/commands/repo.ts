@@ -172,11 +172,15 @@ export class ExecCommand extends BaseInteractiveCommand {
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');
 
+    concurrency = Option.String('-c,--concurrency');
+
     static usage = Command.Usage({
         description: 'Execute CLI command in repo'
     });
 
     public async executeCommand() {
+        const concurrency = this.concurrency ? parseInt(this.concurrency) : undefined;
+
         const rootConfig = await this.loadConfig();
         const targetConfigs = await rootConfig.resolveFilteredConfigs({
             included: this.include,
@@ -184,10 +188,12 @@ export class ExecCommand extends BaseInteractiveCommand {
         });
 
         const allConfigs = rootConfig.flattenConfigs();
-        const configs = await this.createOverridablePrompt('configs', Zod.string().array().transform(ids => _(ids).map(id => allConfigs.find(c => c.identifier === id)).compact().value()), {
+        const configs = await this.createOverridablePrompt('configs', Zod.string().array().transform(ids => _(ids).map(id => allConfigs.find(c => c.identifier === id)).compact().value()), (initial) => ({
             type: 'multiselect',
             message: 'Select Modules',
-            choices: allConfigs.map(c => ({ title: c.pathspec, value: c.identifier, selected: targetConfigs.some(tc => tc.identifier === c.identifier) }))
+            choices: allConfigs.map(c => ({ title: c.pathspec, value: c.identifier, selected: initial?.some(tc => tc === c.identifier) }))
+        }), {
+            defaultValue: targetConfigs.map(c => c.identifier)
         });
 
         const cmd = await this.createOverridablePrompt('cmd', Zod.string().nonempty(), {
@@ -195,9 +201,13 @@ export class ExecCommand extends BaseInteractiveCommand {
             message: 'Command'
         });
 
-        await Bluebird.map(configs, config => config.exec(cmd, { stdout: this.context.stdout, dryRun: this.dryRun }).catch(err => {
-            this.logError(`[${Chalk.magenta(config.pathspec)}] ${err}`);
-        }));
+        await Bluebird.map(configs, config => config.exec(cmd, { stdout: this.context.stdout, dryRun: this.dryRun }).then(() => {
+            this.context.stdout.write(`[${Chalk.magenta(config.pathspec)}] ${Chalk.cyan(cmd)} ${Chalk.green('Complete')}\n`);
+        }).catch(err => {
+            this.context.stdout.write(`[${Chalk.magenta(config.pathspec)}] ${Chalk.cyan(cmd)} ${Chalk.red('Failed')} <${Chalk.red(err)}>\n`);
+        }), concurrency ? {
+            concurrency
+        } : undefined);
     }
 }
 
