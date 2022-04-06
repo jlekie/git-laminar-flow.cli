@@ -1211,15 +1211,18 @@ export class Config {
         await saveState(statePath, state);
     }
 
-    public async exec(cmd: string, { stdout, dryRun }: ExecParams = {}) {
-        await exec(cmd, { cwd: this.path, stdout, dryRun });
+    public async exec(cmd: string, { stdout, dryRun, echo }: ExecParams = {}) {
+        await exec(cmd, { cwd: this.path, stdout, dryRun, echo });
+    }
+    public async execCmd(cmd: string, { stdout, dryRun, echo, trim }: ExecParams & { trim?: boolean } = {}) {
+        return await execCmd(cmd, { cwd: this.path, stdout, dryRun, echo, trim });
     }
 
     public async fetch({ stdout, dryRun }: ExecParams = {}) {
         await exec(`git fetch --all`, { cwd: this.path, stdout, dryRun });
     }
-    public async stage({ stdout, dryRun }: ExecParams = {}) {
-        await exec(`git add .`, { cwd: this.path, stdout, dryRun });
+    public async stage(files: string[], { stdout, dryRun }: ExecParams = {}) {
+        await exec(`git add ${files.join(' ')}`, { cwd: this.path, stdout, dryRun });
     }
     public async commit(message: string, { amend, stdout, dryRun }: ExecParams & CommitParams = {}) {
         await exec(`git commit -m "${message}"${amend ? ' --amend' : ''}`, { cwd: this.path, stdout, dryRun });
@@ -1304,6 +1307,43 @@ export class Config {
 
     public async resolveCommitSha(target: string, { stdout, dryRun }: ExecParams = {}) {
         return execCmd(`git rev-parse ${target}`, { cwd: this.path, stdout, dryRun });
+    }
+
+    public async resolveStatuses({ stdout, dryRun }: ExecParams = {}) {
+        const rawStatus = await this.execCmd('git status --porcelain=v1', { stdout, dryRun, trim: false });
+
+        return _.compact(rawStatus.split('\n').map(line => {
+            if (!line)
+                return;
+
+            const typeCode = line.substring(0, 2);
+            const path = line.substring(3);
+
+            if (typeCode === '??')
+                return { type: 'untracked', path } as const;
+            else if (typeCode === ' M')
+                return { type: 'modified', staged: false, path } as const;
+            else if (typeCode === 'M ')
+                return { type: 'modified', staged: true, path } as const;
+            else if (typeCode === ' A')
+                return { type: 'added', staged: false, path } as const;
+            else if (typeCode === 'A ')
+                return { type: 'added', staged: true, path } as const;
+            else if (typeCode === ' D')
+                return { type: 'deleted', staged: false, path } as const;
+            else if (typeCode === 'D ')
+                return { type: 'deleted', staged: true, path } as const;
+            else if (typeCode === ' R')
+                return { type: 'renamed', staged: false, path } as const;
+            else if (typeCode === 'R ')
+                return { type: 'renamed', staged: true, path } as const;
+            else if (typeCode === ' C')
+                return { type: 'copied', staged: false, path } as const;
+            else if (typeCode === 'C ')
+                return { type: 'copied', staged: true, path } as const;
+            else
+                return { type: 'unknown', path } as const;
+        }));
     }
 
     public async resolveActiveSupport() {
@@ -1414,7 +1454,7 @@ export class Submodule {
             parentConfig: this.parentConfig,
             parentSubmodule: this,
             pathspecPrefix: `${this.parentConfig.pathspec + '/'}${this.name}`,
-            stdout: process.stdout //TMP!!
+            // stdout: process.stdout //TMP!!
         });
 
         return config;

@@ -119,10 +119,19 @@ export class CommitCommand extends BaseInteractiveCommand {
         });
 
         await commit(rootConfig, {
-            configs: async ({ configs }) => this.createOverridablePrompt('configs', Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()), {
+            configs: async ({ configs }) => this.createOverridablePrompt('configs', Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()), (initial) => ({
                 type: 'multiselect',
                 message: 'Select Modules',
-                choices: await Bluebird.map(configs, async c => ({ title: `${c.pathspec} [${Chalk.magenta(await c.resolveCurrentBranch({ stdout: this.context.stdout, dryRun: this.dryRun }))}]`, value: c.identifier, selected: targetConfigs.some(tc => tc.identifier === c.identifier) }))
+                choices: configs.map(c => ({ title: c.pathspec, value: c.identifier, selected: initial?.some(tc => tc === c.identifier) }))
+            }), {
+                defaultValue: targetConfigs.map(c => c.identifier)
+            }),
+            stagedFiles: async ({ config, statuses }) => this.createOverridablePrompt('stagedFiles', Zod.string().array(), (initial) => ({
+                type: 'multiselect',
+                message: `[${Chalk.magenta(config.pathspec)}] Files to Stage`,
+                choices: statuses.map(status => ({ title: status.path, value: status.path, selected: true }))
+            }), {
+                defaultValue: statuses.map(s => s.path)
             }),
             message: ({ config }) => this.createOverridablePrompt('message', Zod.string().nonempty(), (initial) => ({
                 type: 'text',
@@ -211,7 +220,40 @@ export class ExecCommand extends BaseInteractiveCommand {
     }
 }
 
-export class StatusCommand extends BaseCommand {
+// export class StatusCommand extends BaseCommand {
+//     static paths = [['status']];
+
+//     include = Option.Array('--include');
+//     exclude = Option.Array('--exclude');
+
+//     static usage = Command.Usage({
+//         description: 'Report checkout status'
+//     });
+
+//     public async executeCommand() {
+//         const config = await this.loadConfig();
+//         const targetConfigs = await config.resolveFilteredConfigs({
+//             included: this.include,
+//             excluded: this.exclude
+//         });
+
+//         for (const config of targetConfigs) {
+//             const artifact = await config.resolveCurrentArtifact();
+
+//             if (artifact.type === 'master')
+//                 this.context.stdout.write(`[${Chalk.blue(config.path)}] ${Chalk.magenta('MASTER')} ${Chalk.gray(artifact.branch)}\n`);
+//             else if (artifact.type === 'develop')
+//                 this.context.stdout.write(`[${Chalk.blue(config.path)}] ${Chalk.magenta('DEVELOP')} ${Chalk.gray(artifact.branch)}\n`);
+//             else if (artifact.type === 'feature')
+//                 this.context.stdout.write(`[${Chalk.blue(config.path)}] ${Chalk.magenta('FEATURE')} ${Chalk.green(artifact.feature.name)} ${Chalk.gray(artifact.branch)}\n`);
+//             else if (artifact.type === 'release')
+//                 this.context.stdout.write(`[${Chalk.blue(config.path)}] ${Chalk.magenta('RELEASE')} ${Chalk.green(artifact.release.name)} ${Chalk.gray(artifact.branch)}\n`);
+//             else
+//                 this.context.stdout.write(`[${Chalk.blue(config.path)}] ${Chalk.gray(artifact.branch)}\n`);
+//         }
+//     }
+// }
+export class StatusCommand extends BaseInteractiveCommand {
     static paths = [['status']];
 
     include = Option.Array('--include');
@@ -222,25 +264,82 @@ export class StatusCommand extends BaseCommand {
     });
 
     public async executeCommand() {
-        const config = await this.loadConfig();
-        const targetConfigs = await config.resolveFilteredConfigs({
+        const rootConfig = await this.loadConfig();
+        const allConfigs = rootConfig.flattenConfigs();
+        const targetConfigs = await rootConfig.resolveFilteredConfigs({
             included: this.include,
             excluded: this.exclude
         });
+        const configs = await this.createOverridablePrompt('configs', Zod.string().array().transform(ids => _(ids).map(id => allConfigs.find(c => c.identifier === id)).compact().value()), (initial) => ({
+            type: 'multiselect',
+            message: 'Select Modules',
+            choices: allConfigs.map(c => ({ title: c.pathspec, value: c.identifier, selected: initial?.some(tc => tc === c.identifier) }))
+        }), {
+            defaultValue: targetConfigs.map(c => c.identifier)
+        });
 
-        for (const config of targetConfigs) {
-            const artifact = await config.resolveCurrentArtifact();
+        const resolvedStatuses = await Bluebird.map(configs, async config => ({
+            config,
+            statuses: await config.resolveStatuses({ stdout: this.context.stdout, dryRun: this.dryRun })
+        })).filter(c => c.statuses.length > 0);
 
-            if (artifact.type === 'master')
-                this.context.stdout.write(`[${Chalk.blue(config.path)}] ${Chalk.magenta('MASTER')} ${Chalk.gray(artifact.branch)}\n`);
-            else if (artifact.type === 'develop')
-                this.context.stdout.write(`[${Chalk.blue(config.path)}] ${Chalk.magenta('DEVELOP')} ${Chalk.gray(artifact.branch)}\n`);
-            else if (artifact.type === 'feature')
-                this.context.stdout.write(`[${Chalk.blue(config.path)}] ${Chalk.magenta('FEATURE')} ${Chalk.green(artifact.feature.name)} ${Chalk.gray(artifact.branch)}\n`);
-            else if (artifact.type === 'release')
-                this.context.stdout.write(`[${Chalk.blue(config.path)}] ${Chalk.magenta('RELEASE')} ${Chalk.green(artifact.release.name)} ${Chalk.gray(artifact.branch)}\n`);
-            else
-                this.context.stdout.write(`[${Chalk.blue(config.path)}] ${Chalk.gray(artifact.branch)}\n`);
+        for (const { config, statuses } of resolvedStatuses) {
+            const table = new Table({
+                head: [ Chalk.magenta.bold(config.pathspec) ],
+                chars: { 'top': '═' , 'top-mid': '╤' , 'top-left': '╔' , 'top-right': '╗'
+                        , 'bottom': '═' , 'bottom-mid': '╧' , 'bottom-left': '╚' , 'bottom-right': '╝'
+                        , 'left': '║' , 'left-mid': '╟' , 'mid': '─' , 'mid-mid': '┼'
+                        , 'right': '║' , 'right-mid': '╢' , 'middle': '│' }
+            });
+
+            const stagedChanges = statuses.filter(s => s.staged);
+            const unstagedChanges = statuses.filter(s => !s.staged);
+
+            if (stagedChanges.length) {
+                table.push([
+                    Chalk.blue.bold.underline('STAGED') + '\n\n' +
+                    stagedChanges.map(status => {
+                        if (status.type === 'untracked')
+                            return Chalk.gray('U ' + status.path);
+                        else if (status.type === 'modified')
+                            return Chalk.yellow('M ' + status.path);
+                        else if (status.type === 'added')
+                            return Chalk.green('A ' + status.path);
+                        else if (status.type === 'deleted')
+                            return Chalk.red('D ' + status.path);
+                        else if (status.type === 'renamed')
+                            return Chalk.yellow('R ' + status.path);
+                        else if (status.type === 'copied')
+                            return Chalk.gray('C ' + status.path);
+                        else
+                            return Chalk.gray('? ' + status.path);
+                    }).join('\n'),
+                ]);
+            }
+
+            if (unstagedChanges.length) {
+                table.push([
+                    Chalk.blue.bold.underline('UNSTAGED') + '\n\n' +
+                    unstagedChanges.map(status => {
+                        if (status.type === 'untracked')
+                            return Chalk.gray('U ' + status.path);
+                        else if (status.type === 'modified')
+                            return Chalk.yellow('M ' + status.path);
+                        else if (status.type === 'added')
+                            return Chalk.green('A ' + status.path);
+                        else if (status.type === 'deleted')
+                            return Chalk.red('D ' + status.path);
+                        else if (status.type === 'renamed')
+                            return Chalk.yellow('R ' + status.path);
+                        else if (status.type === 'copied')
+                            return Chalk.gray('C ' + status.path);
+                        else
+                            return Chalk.gray('? ' + status.path);
+                    }).join('\n'),
+                ]);
+            }
+
+            this.context.stdout.write(table.toString() + '\n');
         }
     }
 }
@@ -841,17 +940,24 @@ export class GenerateWorkspaceCommand extends BaseInteractiveCommand {
         });
         const workspacePath = Path.resolve(`${workspaceName}.code-workspace`);
 
-        const configs = await this.createOverridablePrompt('configs', Zod.string().array().transform(ids => _(ids).map(id => allConfigs.find(c => c.identifier === id)).compact().value()), {
+        const configs = await this.createOverridablePrompt('configs', Zod.string().array().transform(ids => _(ids).map(id => allConfigs.find(c => c.identifier === id)).compact().value()), (initial) => ({
             type: 'multiselect',
             message: 'Select Modules',
-            choices: allConfigs.map(c => ({ title: c.pathspec, value: c.identifier, selected: targetConfigs.some(tc => tc.identifier === c.identifier) }))
+            choices: allConfigs.map(c => ({ title: c.pathspec, value: c.identifier, selected: initial?.some(tc => tc === c.identifier) }))
+        }), {
+            defaultValue: targetConfigs.map(c => c.identifier)
         });
 
         const workspace = WorkspaceSchema.parse(await FS.pathExists(workspacePath) ? await FS.readJson(workspacePath) : {});
         workspace.folders = workspace.folders ?? [];
 
         for (const config of configs) {
-            const name = config.pathspec === 'root' ? 'Workspace' : config.pathspec.replace('root/', '').replace(/\//g, ' / ');
+            const tmp = (config.pathspec === 'root' ? 'Workspace' : config.pathspec.replace('root/', '').replace(/\//g, ' / ')).split('.');
+            const name = _(tmp)
+                .map(f => f.split('-').map(ff => _.capitalize(ff)).join(''))
+                .value().join('.');
+
+            // const name = _.startCase(config.pathspec === 'root' ? 'Workspace' : config.pathspec.replace('root/', '').replace(/\//g, ' / '));
             const path = './' + Path.relative(Path.dirname(workspacePath), config.path).replace(/\\/g, '/');
 
             const existingFolder = workspace.folders.find(f => f.glfIdentifier === config.identifier);
@@ -871,5 +977,49 @@ export class GenerateWorkspaceCommand extends BaseInteractiveCommand {
         await FS.writeJson(workspacePath, workspace, {
             spaces: 2
         });
+    }
+}
+
+export class GenerateSolutionCommand extends BaseInteractiveCommand {
+    static paths = [['vs', 'create', 'solution']];
+
+    include = Option.Array('--include');
+    exclude = Option.Array('--exclude');
+
+    public async executeCommand() {
+        const rootConfig = await this.loadConfig();
+        const allConfigs = rootConfig.flattenConfigs();
+        const targetConfigs = await rootConfig.resolveFilteredConfigs({
+            included: this.include,
+            excluded: this.exclude
+        });
+
+        const solutionName = await this.createOverridablePrompt('name', Zod.string().nonempty(), {
+            type: 'text',
+            message: 'Solution Name'
+        });
+        const solutionPath = Path.resolve(rootConfig.path, `${solutionName}.sln`);
+
+        const configs = await this.createOverridablePrompt('configs', Zod.string().array().transform(ids => _(ids).map(id => allConfigs.find(c => c.identifier === id)).compact().value()), (initial) => ({
+            type: 'multiselect',
+            message: 'Select Modules',
+            choices: allConfigs.map(c => ({ title: c.pathspec, value: c.identifier, selected: initial?.some(tc => tc === c.identifier) }))
+        }), {
+            defaultValue: targetConfigs.map(c => c.identifier)
+        });
+
+        if (await FS.pathExists(solutionPath)) {
+            this.logWarning(`Solution already exists at ${solutionPath}, cannot override`);
+            return;
+        }
+
+        await rootConfig.exec(`dotnet new sln -n ${solutionName}`, { stdout: this.context.stdout, dryRun: this.dryRun });
+
+        for (const config of configs) {
+            const relativePath = Path.relative(rootConfig.path, config.path);
+
+            this.logVerbose(`Adding ${config.pathspec} to solution`);
+            await rootConfig.exec(`dotnet sln ${solutionName}.sln add --in-root ${relativePath}`, { stdout: this.context.stdout, dryRun: this.dryRun });
+        }
     }
 }

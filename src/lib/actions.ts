@@ -539,10 +539,11 @@ export async function syncFeature(rootConfig: Config, { stdout, dryRun, ...param
 
 export async function commit(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
     configs: ActionParam<Config[], { configs: Config[] }>;
+    stagedFiles: ActionParam<string[], { config: Config, statuses: Awaited<ReturnType<Config['resolveStatuses']>> }>;
     message: ActionParam<string, { config: Config }>;
     stage?: ActionParam<boolean, { config: Config }>;
 }>) {
-    const allConfigs = await Bluebird.filter(rootConfig.flattenConfigs(), config => config.isDirty({ stdout, dryRun }));
+    const allConfigs = await Bluebird.filter(rootConfig.flattenConfigs(), config => config.resolveStatuses({ stdout, dryRun }).then(s => s.length > 0));
     if (!allConfigs.length)
         return;
     
@@ -550,10 +551,11 @@ export async function commit(rootConfig: Config, { stdout, dryRun, ...params }: 
     await Bluebird.map(Bluebird.mapSeries(configs, async config => {
         return {
             config,
+            stagedFiles: await params.stagedFiles({ config, statuses: await config.resolveStatuses({ stdout, dryRun }) }),
             message: await params.message({ config })
         };
-    }), async ({ config, message }) => {
-        await config.stage({ stdout, dryRun });
+    }), async ({ config, message, stagedFiles }) => {
+        await config.stage(stagedFiles, { stdout, dryRun });
         await config.commit(message, { stdout, dryRun });
     });
 }
