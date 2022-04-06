@@ -20,6 +20,25 @@ import { BaseCommand, BaseInteractiveCommand } from './common';
 import { loadV2Config, Config, Feature, StateProxy, Support } from 'lib/config';
 import { loadState } from 'lib/state';
 import { commit } from 'lib/actions';
+import { exec, ExecOptions } from 'lib/exec';
+
+async function executeVscode(args: string | string[], options: ExecOptions & { vscodeExec?: string } = {}) {
+    args = _.isArray(args) ? args : [ args ];
+
+    const vscodeCmd = options.vscodeExec ?? (() => {
+        const termProgram = process.env['TERM_PROGRAM'];
+        const termProgramVersion = process.env['TERM_PROGRAM_VERSION'];
+    
+        if (!termProgram || termProgram !== 'vscode')
+            throw new Error('Required environment variable TERM_PROGRAM missing');
+        if (!termProgramVersion)
+            throw new Error('Required environment variable TERM_PROGRAM_VERSION missing');
+
+        return termProgramVersion.endsWith('-insider') ? 'code-insiders' : 'code';
+    })();
+
+    await exec(`${vscodeCmd} ${args.join(' ')}`, options);
+}
 
 export class InitCommand extends BaseCommand {
     static paths = [['init']];
@@ -920,8 +939,8 @@ const WorkspaceSchema = Zod.object({
     }).array().optional(),
     settings: Zod.record(Zod.any()).optional()
 });
-export class GenerateWorkspaceCommand extends BaseInteractiveCommand {
-    static paths = [['vscode', 'generate-workspace']];
+export class CreateWorkspaceCommand extends BaseInteractiveCommand {
+    static paths = [['vscode', 'workspace', 'create']];
 
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');
@@ -977,6 +996,31 @@ export class GenerateWorkspaceCommand extends BaseInteractiveCommand {
         await FS.writeJson(workspacePath, workspace, {
             spaces: 2
         });
+    }
+}
+export class OpenWorkspaceCommand extends BaseInteractiveCommand {
+    static paths = [['vscode', 'workspace', 'open']];
+
+    include = Option.Array('--include');
+    exclude = Option.Array('--exclude');
+
+    public async executeCommand() {
+        const rootConfig = await this.loadConfig();
+        const allConfigs = rootConfig.flattenConfigs();
+        const targetConfigs = await rootConfig.resolveFilteredConfigs({
+            included: this.include,
+            excluded: this.exclude
+        });
+
+        const configs = await this.createOverridablePrompt('configs', Zod.string().array().transform(ids => _(ids).map(id => allConfigs.find(c => c.identifier === id)).compact().value()), (initial) => ({
+            type: 'multiselect',
+            message: 'Select Modules',
+            choices: allConfigs.map(c => ({ title: c.pathspec, value: c.identifier, selected: initial?.some(tc => tc === c.identifier) }))
+        }), {
+            defaultValue: targetConfigs.map(c => c.identifier)
+        });
+
+        await executeVscode([ '--wait', '--new-window', ...configs.map(c => c.path) ], { vscodeExec: rootConfig.settings.vscodeExec, cwd: rootConfig.path, stdout: this.context.stdout, dryRun: this.dryRun });
     }
 }
 

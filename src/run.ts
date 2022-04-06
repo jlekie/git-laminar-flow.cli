@@ -23,7 +23,8 @@ cli.register(RepoCommands.ListCommand);
 cli.register(RepoCommands.CreateCommand);
 cli.register(RepoCommands.ResetStateCommand);
 cli.register(RepoCommands.CommitCommand);
-cli.register(RepoCommands.GenerateWorkspaceCommand);
+cli.register(RepoCommands.CreateWorkspaceCommand);
+cli.register(RepoCommands.OpenWorkspaceCommand);
 cli.register(RepoCommands.GenerateSolutionCommand);
 
 cli.register(SubmoduleCommands.CloneCommand);

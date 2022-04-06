@@ -10,12 +10,14 @@ export const GlfsRepositorySchema = Zod.object({
 });
 export const SettingsSchema = Zod.object({
     defaultGlfsRepository: Zod.string(),
-    glfsRepositories: GlfsRepositorySchema.array().optional()
+    glfsRepositories: GlfsRepositorySchema.array().optional(),
+    vscodeExec: Zod.string().optional()
 });
 
 export class Settings {
     public readonly defaultGlfsRepository: string;
     public readonly glfsRepositories: readonly GlfsRepository[];
+    public readonly vscodeExec?: string;
 
     public static parse(value: unknown) {
         return this.fromSchema(SettingsSchema.parse(value));
@@ -34,9 +36,10 @@ export class Settings {
         });
     }
 
-    public constructor(params: Pick<Settings, 'defaultGlfsRepository' | 'glfsRepositories'>) {
+    public constructor(params: Pick<Settings, 'defaultGlfsRepository' | 'glfsRepositories'> & Partial<Pick<Settings, 'vscodeExec'>>) {
         this.defaultGlfsRepository = params.defaultGlfsRepository;
         this.glfsRepositories = params.glfsRepositories;
+        this.vscodeExec = params.vscodeExec;
     }
 
     public getDefaultRepo() {
