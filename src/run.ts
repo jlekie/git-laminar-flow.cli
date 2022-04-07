@@ -20,14 +20,13 @@ cli.register(RepoCommands.StatusCommand);
 cli.register(RepoCommands.SyncCommand);
 cli.register(RepoCommands.CloseCommand);
 cli.register(RepoCommands.ListCommand);
-cli.register(RepoCommands.CreateCommand);
 cli.register(RepoCommands.ResetStateCommand);
 cli.register(RepoCommands.CommitCommand);
 cli.register(RepoCommands.CreateWorkspaceCommand);
 cli.register(RepoCommands.OpenWorkspaceCommand);
 cli.register(RepoCommands.GenerateSolutionCommand);
 
-cli.register(SubmoduleCommands.CloneCommand);
+// cli.register(SubmoduleCommands.CloneCommand);
 
 process.stdout.isTTY ? cli.register(FeatureCommands.CreateInteractiveCommand) : cli.register(FeatureCommands.CreateCommand);
 process.stdout.isTTY ? cli.register(ReleaseCommands.CreateInteractiveCommand) : cli.register(ReleaseCommands.CreateCommand);
@@ -45,7 +44,7 @@ process.stdout.isTTY && cli.register(ReleaseCommands.CloseInteractiveCommand);
 cli.register(SupportCommands.ActivateCommand);
 
 cli.register(ConfigCommands.ImportCommand);
-cli.register(ConfigCommands.EditCommand);
+process.stdout.isTTY && cli.register(ConfigCommands.EditCommand);
 cli.register(ConfigCommands.ViewCommand);
 cli.register(ConfigCommands.MigrateCommand);
 

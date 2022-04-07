@@ -128,7 +128,7 @@ export class DeleteInteractiveCommand extends BaseInteractiveCommand {
 
     static usage = Command.Usage({
         description: 'Delete hotfix',
-        category: 'Support'
+        category: 'Hotfix'
     });
 
     public async executeCommand() {

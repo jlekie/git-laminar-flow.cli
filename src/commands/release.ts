@@ -124,7 +124,7 @@ export class DeleteInteractiveCommand extends BaseInteractiveCommand {
 
     static usage = Command.Usage({
         description: 'Delete release',
-        category: 'Support'
+        category: 'Release'
     });
 
     public async executeCommand() {

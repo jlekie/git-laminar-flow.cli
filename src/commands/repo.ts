@@ -33,8 +33,7 @@ export class InitCommand extends BaseCommand {
     writeGitmodules = Option.Boolean('--write-gitmodules');
 
     static usage = Command.Usage({
-        description: 'Initialize repo',
-        details: 'This will initialize the repo'
+        description: 'Initialize repo'
     });
 
     public async executeCommand() {
@@ -62,7 +61,7 @@ export class CheckoutCommand extends BaseCommand {
     target = Option.String('--target', 'branch://develop');
 
     static usage = Command.Usage({
-        description: 'Checkout feature'
+        description: 'Checkout target'
     });
 
     public async executeCommand() {
@@ -712,7 +711,7 @@ export class ListCommand extends BaseCommand {
     exclude = Option.Array('--exclude');
 
     static usage = Command.Usage({
-        description: 'Execute CLI command in repo'
+        description: 'List overall status of repo'
     });
 
     public async executeCommand() {
@@ -842,78 +841,82 @@ export class ListCommand extends BaseCommand {
     }
 }
 
-export class CreateCommand extends BaseCommand {
-    static paths = [['create', 'feature']];
+// export class CreateCommand extends BaseCommand {
+//     static paths = [['create', 'feature']];
 
-    include = Option.Array('--include');
-    exclude = Option.Array('--exclude');
+//     include = Option.Array('--include');
+//     exclude = Option.Array('--exclude');
 
-    featureName = Option.String('--name', { required: true });
-    branchName = Option.String('--branch');
-    from = Option.String('--from', 'branch://develop');
-    checkout = Option.Boolean('--checkout', false);
+//     featureName = Option.String('--name', { required: true });
+//     branchName = Option.String('--branch');
+//     from = Option.String('--from', 'branch://develop');
+//     checkout = Option.Boolean('--checkout', false);
 
-    public async executeCommand() {
-        const config = await this.loadConfig();
-        const targetConfigs = await config.resolveFilteredConfigs({
-            included: this.include,
-            excluded: this.exclude
-        });
+//     public async executeCommand() {
+//         const config = await this.loadConfig();
+//         const targetConfigs = await config.resolveFilteredConfigs({
+//             included: this.include,
+//             excluded: this.exclude
+//         });
 
-        const configs = await Prompts({
-            type: 'multiselect',
-            name: 'value',
-            message: 'Select Modules',
-            choices: targetConfigs.map(c => ({ title: c.pathspec, value: c.identifier, selected: true }))
-        }).then(d => _(d.value).map(id => targetConfigs.find(c => c.identifier === id)).compact().value());
+//         const configs = await Prompts({
+//             type: 'multiselect',
+//             name: 'value',
+//             message: 'Select Modules',
+//             choices: targetConfigs.map(c => ({ title: c.pathspec, value: c.identifier, selected: true }))
+//         }).then(d => _(d.value).map(id => targetConfigs.find(c => c.identifier === id)).compact().value());
 
-        for (const config of configs) {
-            const fromElement = await config.parseElement(this.from);
-            const fromBranch = await (async () => {
-                if (fromElement.type === 'branch')
-                    return fromElement.branch;
-                else if (fromElement.type === 'repo')
-                    return fromElement.config.resolveCurrentBranch();
-                else if (fromElement.type === 'feature')
-                    return fromElement.feature.branchName;
-                else if (fromElement.type === 'release')
-                    return fromElement.release.branchName;
-                else if (fromElement.type === 'hotfix')
-                    return fromElement.hotfix.branchName;
-                else if (fromElement.type === 'support')
-                    return fromElement.support.developBranchName;
-                else
-                    throw new Error(`Cannot derive source branch from ${this.from}`);
-            })();
+//         for (const config of configs) {
+//             const fromElement = await config.parseElement(this.from);
+//             const fromBranch = await (async () => {
+//                 if (fromElement.type === 'branch')
+//                     return fromElement.branch;
+//                 else if (fromElement.type === 'repo')
+//                     return fromElement.config.resolveCurrentBranch();
+//                 else if (fromElement.type === 'feature')
+//                     return fromElement.feature.branchName;
+//                 else if (fromElement.type === 'release')
+//                     return fromElement.release.branchName;
+//                 else if (fromElement.type === 'hotfix')
+//                     return fromElement.hotfix.branchName;
+//                 else if (fromElement.type === 'support')
+//                     return fromElement.support.developBranchName;
+//                 else
+//                     throw new Error(`Cannot derive source branch from ${this.from}`);
+//             })();
 
-            const branchName = this.branchName ?? `${fromElement.type === 'support' ? `support/${fromElement.support.name}/` : ''}feature/${this.featureName}`;
-            const source = fromElement.type === 'support' ? fromElement.support : config;
+//             const branchName = this.branchName ?? `${fromElement.type === 'support' ? `support/${fromElement.support.name}/` : ''}feature/${this.featureName}`;
+//             const source = fromElement.type === 'support' ? fromElement.support : config;
 
-            if (source.features.some(f => f.name === this.featureName))
-                continue;
+//             if (source.features.some(f => f.name === this.featureName))
+//                 continue;
 
-            const feature = new Feature({
-                name: this.featureName,
-                branchName,
-                sourceSha: await config.resolveCommitSha(fromBranch)
-            });
-            source.features.push(feature);
-            await feature.register(config, source instanceof Support ? source : undefined);
+//             const feature = new Feature({
+//                 name: this.featureName,
+//                 branchName,
+//                 sourceSha: await config.resolveCommitSha(fromBranch)
+//             });
+//             source.features.push(feature);
+//             await feature.register(config, source instanceof Support ? source : undefined);
 
-            await feature.init({ stdout: this.context.stdout, dryRun: this.dryRun });
-            await config.save({ stdout: this.context.stdout, dryRun: this.dryRun });
+//             await feature.init({ stdout: this.context.stdout, dryRun: this.dryRun });
+//             await config.save({ stdout: this.context.stdout, dryRun: this.dryRun });
 
-            if (this.checkout)
-                await config.checkoutBranch(feature.branchName, { stdout: this.context.stdout, dryRun: this.dryRun });
-        }
-    }
-}
+//             if (this.checkout)
+//                 await config.checkoutBranch(feature.branchName, { stdout: this.context.stdout, dryRun: this.dryRun });
+//         }
+//     }
+// }
 
 export class ResetStateCommand extends BaseCommand {
     static paths = [['state', 'reset']];
 
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');
+
+    static usage = Command.Usage({
+        description: 'Reset GLF local state'
+    });
 
     public async executeCommand() {
         const config = await this.loadConfig();
@@ -932,6 +935,10 @@ export class ValidateCommand extends BaseCommand {
 
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');
+
+    static usage = Command.Usage({
+        description: 'Validate repo checkout'
+    });
 
     public async executeCommand() {
         const config = await this.loadConfig();
@@ -958,6 +965,11 @@ export class CreateWorkspaceCommand extends BaseInteractiveCommand {
 
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');
+
+    static usage = Command.Usage({
+        description: 'Generate/inject repo checkouts into a VSCode workspace',
+        category: 'VSCode'
+    });
 
     public async executeCommand() {
         const rootConfig = await this.loadConfig();
@@ -1018,6 +1030,11 @@ export class OpenWorkspaceCommand extends BaseInteractiveCommand {
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');
 
+    static usage = Command.Usage({
+        description: 'Create an on-demand VSCode workspace for repo checkouts',
+        category: 'VSCode'
+    });
+
     public async executeCommand() {
         const rootConfig = await this.loadConfig();
         const allConfigs = rootConfig.flattenConfigs();
@@ -1043,6 +1060,11 @@ export class GenerateSolutionCommand extends BaseInteractiveCommand {
 
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');
+
+    static usage = Command.Usage({
+        description: 'Create a new solution from repo checkouts',
+        category: "Visual Studio"
+    });
 
     public async executeCommand() {
         const rootConfig = await this.loadConfig();
