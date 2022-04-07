@@ -428,6 +428,14 @@ export type Element = {
 };
 export type NarrowedElement<T, N> = T extends { type: N } ? T : never;
 
+export interface BranchStatus {
+    branchName: string;
+    localExists: boolean;
+    upstreamExists: boolean;
+    commitsAhead: number;
+    commitsBehind: number;
+}
+
 export type ConfigParams = Pick<Config, 'identifier' | 'upstreams' | 'submodules' | 'features' | 'releases' | 'hotfixes' | 'supports' | 'included' | 'excluded'> & Partial<Pick<Config, 'featureMessageTemplate' | 'releaseMessageTemplate' | 'hotfixMessageTemplate' | 'releaseTagTemplate' | 'hotfixTagTemplate' | 'isNew' | 'managed' | 'tags'>>;
 export class Config {
     public identifier: string;
@@ -913,12 +921,15 @@ export class Config {
     }
 
     // Initialize the config and its associated repo
-    public async init({ stdout, dryRun }: ExecParams = {}) {
+    public async init({ stdout, dryRun, writeGitmdoulesConfig }: ExecParams & { writeGitmdoulesConfig?: boolean } = {}) {
         await this.setStateValue('configUri', this.sourceUri);
 
         if (!this.managed) {
             stdout?.write(Chalk.yellow("Repo not managed, bypassing\n"));
-            this.writeGitmodulesConfig({ stdout, dryRun });
+
+            if (writeGitmdoulesConfig && this.submodules.length > 0)
+                this.writeGitmodulesConfig({ stdout, dryRun });
+
             return;
         }
 
@@ -971,24 +982,44 @@ export class Config {
         // Create master branch if missing
         if (!await this.branchExists('master', { stdout, dryRun })) {
             if (await this.remoteBranchExists('master', 'origin', { stdout, dryRun })) {
+                const currentBranch = await this.resolveCurrentBranch({ stdout, dryRun });
                 await exec(`git checkout -b master --track origin/master`, { cwd: this.path, stdout, dryRun });
+                await this.checkoutBranch(currentBranch, { stdout, dryRun });
             }
             else {
-                await this.createBranch('master', { stdout, dryRun });
+                const initialSha = await this.execCmd('git rev-list --max-parents=0 HEAD', { stdout, dryRun });
+                await this.createBranch('master', { source: initialSha, stdout, dryRun });
             }
         }
+        // else if (await this.remoteBranchExists('master', 'origin', { stdout, dryRun }) && !(await this.resolveBranchUpstream('master', { stdout, dryRun }))) {
+        //     const currentBranch = await this.resolveCurrentBranch({ stdout, dryRun });
+
+        //     await this.checkoutBranch('master', { stdout, dryRun });
+        //     await this.exec('git branch -u origin/master', { stdout, dryRun });
+        //     await this.checkoutBranch(currentBranch, { stdout, dryRun });
+        // }
 
         // Create develop branch if missing
         if (!await this.branchExists('develop', { stdout, dryRun })) {
             if (await this.remoteBranchExists('develop', 'origin', { stdout, dryRun })) {
+                const currentBranch = await this.resolveCurrentBranch({ stdout, dryRun });
                 await exec(`git checkout -b develop --track origin/develop`, { cwd: this.path, stdout, dryRun });
+                await this.checkoutBranch(currentBranch, { stdout, dryRun });
             }
             else {
-                await this.createBranch('develop', { stdout, dryRun });
+                const initialSha = await this.execCmd('git rev-list --max-parents=0 HEAD', { stdout, dryRun });
+                await this.createBranch('develop', { source: initialSha, stdout, dryRun });
             }
 
             await this.checkoutBranch('develop', { stdout, dryRun });
         }
+        // else if (await this.remoteBranchExists('develop', 'origin', { stdout, dryRun }) && !(await this.resolveBranchUpstream('develop', { stdout, dryRun }))) {
+        //     const currentBranch = await this.resolveCurrentBranch({ stdout, dryRun });
+
+        //     await this.checkoutBranch('develop', { stdout, dryRun });
+        //     await this.exec('git branch -u origin/develop', { stdout, dryRun });
+        //     await this.checkoutBranch(currentBranch, { stdout, dryRun });
+        // }
 
         // // Create gitflow branch if missing
         // if (!await this.branchExists('gitflow', { stdout, dryRun })) {
@@ -1012,7 +1043,7 @@ export class Config {
         //     this.createUpstream('origin', this.parentSubmodule.url, { stdout, dryRun });
 
         // Update .gitmodules config with submodules
-        if (this.submodules.length > 0)
+        if (writeGitmdoulesConfig && this.submodules.length > 0)
             this.writeGitmodulesConfig({ stdout, dryRun });
 
         // // Initialize submodules
@@ -1310,7 +1341,7 @@ export class Config {
     }
 
     public async resolveStatuses({ stdout, dryRun }: ExecParams = {}) {
-        const rawStatus = await this.execCmd('git status --porcelain=v1', { stdout, dryRun, trim: false });
+        const rawStatus = await this.execCmd('git status -uall --porcelain=v1', { stdout, dryRun, trim: false });
 
         return _.compact(rawStatus.split('\n').map(line => {
             if (!line)
@@ -1344,6 +1375,45 @@ export class Config {
             else
                 return { type: 'unknown', path } as const;
         }));
+    }
+
+    public async resolveBranchUpstream(branchName: string, { stdout, dryRun }: ExecParams = {}) {
+        return execCmd(`git branch --list ${branchName} --format="%(upstream)"`, { cwd: this.path, stdout, dryRun });
+    }
+
+    public async resolveBranchStatus(branchName: string, upstream: string, { stdout, dryRun }: ExecParams = {}) {
+        const upstreamBranchName = `${upstream}/${branchName}`;
+        const localExists = await this.branchExists(branchName, { stdout, dryRun });
+        const upstreamExists = await this.remoteBranchExists(branchName, upstream, { stdout, dryRun });
+        const localSha = await this.resolveCommitSha(branchName, { stdout, dryRun }).catch(() => undefined);
+        const upstreamSha = await this.resolveCommitSha(upstreamBranchName, { stdout, dryRun }).catch(() => undefined);
+
+        return {
+            branchName,
+            upstream,
+            upstreamBranchName,
+            localExists,
+            upstreamExists,
+            resolveCommitsBehind: ({ stdout }: ExecParams = {}) => this.execCmd(`git rev-list --count ${branchName}..${upstreamBranchName}`, { stdout })
+                .then(value => parseInt(value))
+                .catch(() => -1),
+            resolveCommitsAhead: ({ stdout }: ExecParams = {}) => this.execCmd(`git rev-list --count ${upstreamBranchName}..${branchName}`, { stdout })
+                .then(value => parseInt(value))
+                .catch(() => -1),
+            localSha,
+            upstreamSha,
+            differs: localExists && upstreamExists && localSha !== upstreamSha
+        };
+    }
+
+    public async checkout<T>(branchName: string, handler: () => T | Promise<T>, { orphan, stdout, dryRun }: ExecParams & CheckoutBranchParams = {}) {
+        const originalBranchName = await this.resolveCurrentBranch({ stdout });
+
+        originalBranchName !== branchName && await this.checkoutBranch(branchName, { orphan, stdout, dryRun });
+        const result = await handler();
+        originalBranchName !== branchName && await this.checkoutBranch(originalBranchName, { stdout, dryRun });
+
+        return result;
     }
 
     public async resolveActiveSupport() {

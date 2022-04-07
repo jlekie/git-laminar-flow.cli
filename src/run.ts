@@ -46,6 +46,7 @@ cli.register(SupportCommands.ActivateCommand);
 
 cli.register(ConfigCommands.ImportCommand);
 cli.register(ConfigCommands.EditCommand);
+cli.register(ConfigCommands.ViewCommand);
 cli.register(ConfigCommands.MigrateCommand);
 
 cli.register(Builtins.HelpCommand);

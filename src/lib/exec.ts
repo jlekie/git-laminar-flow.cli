@@ -1,3 +1,4 @@
+import * as _ from 'lodash';
 import * as Chalk from 'chalk';
 import * as ChildProcess from 'child_process';
 import * as Stream from 'stream';
@@ -66,4 +67,22 @@ export async function prompt(query: string, { cwd, stdin, stdout }: InputOptions
         rl.close();
         resolve(ans);
     }));
+}
+
+export async function executeVscode(args: string | string[], options: ExecOptions & { vscodeExec?: string } = {}) {
+    args = _.isArray(args) ? args : [ args ];
+
+    const vscodeCmd = options.vscodeExec ?? (() => {
+        const termProgram = process.env['TERM_PROGRAM'];
+        const termProgramVersion = process.env['TERM_PROGRAM_VERSION'];
+    
+        if (!termProgram || termProgram !== 'vscode')
+            throw new Error('Required environment variable TERM_PROGRAM missing');
+        if (!termProgramVersion)
+            throw new Error('Required environment variable TERM_PROGRAM_VERSION missing');
+
+        return termProgramVersion.endsWith('-insider') ? 'code-insiders' : 'code';
+    })();
+
+    await exec(`${vscodeCmd} ${args.join(' ')}`, options);
 }

@@ -19,26 +19,8 @@ import { BaseCommand, BaseInteractiveCommand } from './common';
 
 import { loadV2Config, Config, Feature, StateProxy, Support } from 'lib/config';
 import { loadState } from 'lib/state';
-import { commit } from 'lib/actions';
-import { exec, ExecOptions } from 'lib/exec';
-
-async function executeVscode(args: string | string[], options: ExecOptions & { vscodeExec?: string } = {}) {
-    args = _.isArray(args) ? args : [ args ];
-
-    const vscodeCmd = options.vscodeExec ?? (() => {
-        const termProgram = process.env['TERM_PROGRAM'];
-        const termProgramVersion = process.env['TERM_PROGRAM_VERSION'];
-    
-        if (!termProgram || termProgram !== 'vscode')
-            throw new Error('Required environment variable TERM_PROGRAM missing');
-        if (!termProgramVersion)
-            throw new Error('Required environment variable TERM_PROGRAM_VERSION missing');
-
-        return termProgramVersion.endsWith('-insider') ? 'code-insiders' : 'code';
-    })();
-
-    await exec(`${vscodeCmd} ${args.join(' ')}`, options);
-}
+import { commit, sync } from 'lib/actions';
+import { executeVscode } from 'lib/exec';
 
 export class InitCommand extends BaseCommand {
     static paths = [['init']];
@@ -47,6 +29,8 @@ export class InitCommand extends BaseCommand {
 
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');
+
+    writeGitmodules = Option.Boolean('--write-gitmodules');
 
     static usage = Command.Usage({
         description: 'Initialize repo',
@@ -60,7 +44,7 @@ export class InitCommand extends BaseCommand {
             excluded: this.exclude
         });
 
-        await Bluebird.map(targetConfigs, config => config.init({ stdout: this.context.stdout, dryRun: this.dryRun }), {
+        await Bluebird.map(targetConfigs, config => config.init({ stdout: this.context.stdout, dryRun: this.dryRun, writeGitmdoulesConfig: this.writeGitmodules }), {
             concurrency: 5
         });
 
@@ -304,7 +288,7 @@ export class StatusCommand extends BaseInteractiveCommand {
 
         for (const { config, statuses } of resolvedStatuses) {
             const table = new Table({
-                head: [ Chalk.magenta.bold(config.pathspec) ],
+                head: [ Chalk.white.bold(`${config.pathspec} [${Chalk.magenta(await config.resolveCurrentBranch({ stdout: this.context.stdout, dryRun: this.dryRun }))}]`) ],
                 chars: { 'top': '═' , 'top-mid': '╤' , 'top-left': '╔' , 'top-right': '╗'
                         , 'bottom': '═' , 'bottom-mid': '╧' , 'bottom-left': '╚' , 'bottom-right': '╝'
                         , 'left': '║' , 'left-mid': '╟' , 'mid': '─' , 'mid-mid': '┼'
@@ -363,58 +347,88 @@ export class StatusCommand extends BaseInteractiveCommand {
     }
 }
 
-export class SyncCommand extends BaseCommand {
+export class SyncCommand extends BaseInteractiveCommand {
     static paths = [['sync']];
 
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');
 
-    target = Option.String('--target', 'branch://develop');
-    abort = Option.Boolean('--abort', false);
-
     static usage = Command.Usage({
-        description: 'Sync checkouts with branch'
+        description: 'Sync local/remote changes'
     });
 
     public async executeCommand() {
-        const config = await this.loadConfig();
-        const targetConfigs = await config.resolveFilteredConfigs({
+        const rootConfig = await this.loadConfig();
+        const targetConfigs = await rootConfig.resolveFilteredConfigs({
             included: this.include,
             excluded: this.exclude
         });
 
-        const [ type, target ] = this.target.split('://');
-
-        for (const config of targetConfigs) {
-            const branch = (() => {
-                if (type === 'branch') {
-                    return target
-                }
-                else if (type === 'feature') {
-                    const feature = config.features.find(f => f.name === target);
-                    if (feature)
-                        return feature.branchName;
-                }
-            })();
-
-            if (!branch || !await config.branchExists(branch))
-                continue;
-
-            const currentBranch = await config.resolveCurrentBranch({ stdout: this.context.stdout });
-            if (currentBranch === branch)
-                continue;
-
-            if (this.abort) {
-                await config.abortMerge({ stdout: this.context.stdout, dryRun: this.dryRun });
-            }
-            else {
-                await config.merge(branch, { stdout: this.context.stdout, dryRun: this.dryRun }).catch(() => {
-                    this.logWarning(`Merge failed, resolve conflicts and commit merged changes`)
-                });
-            }
-        }
+        await sync(rootConfig, {
+            configs: async ({ configs }) => this.createOverridablePrompt('configs', Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()), (initial) => ({
+                type: 'multiselect',
+                message: 'Select Modules',
+                choices: configs.map(c => ({ title: c.pathspec, value: c.identifier, selected: initial?.some(tc => tc === c.identifier) }))
+            }), {
+                defaultValue: targetConfigs.map(c => c.identifier)
+            }),
+            stdout: this.context.stdout,
+            dryRun: this.dryRun
+        });
     }
 }
+// export class SyncCommand extends BaseCommand {
+//     static paths = [['sync']];
+
+//     include = Option.Array('--include');
+//     exclude = Option.Array('--exclude');
+
+//     target = Option.String('--target', 'branch://develop');
+//     abort = Option.Boolean('--abort', false);
+
+//     static usage = Command.Usage({
+//         description: 'Sync checkouts with branch'
+//     });
+
+//     public async executeCommand() {
+//         const config = await this.loadConfig();
+//         const targetConfigs = await config.resolveFilteredConfigs({
+//             included: this.include,
+//             excluded: this.exclude
+//         });
+
+//         const [ type, target ] = this.target.split('://');
+
+//         for (const config of targetConfigs) {
+//             const branch = (() => {
+//                 if (type === 'branch') {
+//                     return target
+//                 }
+//                 else if (type === 'feature') {
+//                     const feature = config.features.find(f => f.name === target);
+//                     if (feature)
+//                         return feature.branchName;
+//                 }
+//             })();
+
+//             if (!branch || !await config.branchExists(branch))
+//                 continue;
+
+//             const currentBranch = await config.resolveCurrentBranch({ stdout: this.context.stdout });
+//             if (currentBranch === branch)
+//                 continue;
+
+//             if (this.abort) {
+//                 await config.abortMerge({ stdout: this.context.stdout, dryRun: this.dryRun });
+//             }
+//             else {
+//                 await config.merge(branch, { stdout: this.context.stdout, dryRun: this.dryRun }).catch(() => {
+//                     this.logWarning(`Merge failed, resolve conflicts and commit merged changes`)
+//                 });
+//             }
+//         }
+//     }
+// }
 
 export class CloseCommand extends BaseCommand {
     static paths = [['close']];

@@ -559,3 +559,60 @@ export async function commit(rootConfig: Config, { stdout, dryRun, ...params }: 
         await config.commit(message, { stdout, dryRun });
     });
 }
+
+export async function sync(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
+    configs: ActionParam<Config[], { configs: Config[] }>;
+}>) {
+    const allConfigs = rootConfig.flattenConfigs();
+    const statuses = await Bluebird.map(allConfigs, async config => {
+        if (!config.managed)
+            return;
+
+        await config.fetch({ stdout, dryRun });
+
+        const master = await config.resolveBranchStatus('master', 'origin', { stdout });
+        const develop = await config.resolveBranchStatus('develop', 'origin', { stdout });
+
+        const features = await Bluebird
+            .map(config.features, feature => feature.upstream ? config.resolveBranchStatus(feature.branchName, feature.upstream, { stdout }) : undefined)
+            .then(s => _.compact(s));
+
+        return {
+            identifier: config.identifier,
+            master,
+            develop,
+            features,
+            applicable: master.differs || develop.differs
+        };
+    }).then(statuses => _(statuses).compact().keyBy(s => s.identifier).value());
+
+    const applicableConfigs = allConfigs.filter(c => statuses[c.identifier]?.applicable)
+    if (!applicableConfigs.length)
+        return;
+
+    const configs = await params.configs({ configs: applicableConfigs });
+    await Bluebird.map(Bluebird.mapSeries(configs, async config => ({
+        config,
+        // stagedFiles: await params.stagedFiles({ config, statuses: await config.resolveStatuses({ stdout, dryRun }) }),
+        // message: await params.message({ config })
+    })), async ({ config }) => {
+        const status = statuses[config.identifier];
+
+        const processStatus = async (branchStatus: Awaited<ReturnType<Config['resolveBranchStatus']>>) => {
+            if (branchStatus.differs) {
+                await config.checkout(branchStatus.branchName, async () => {
+                    if (await branchStatus.resolveCommitsBehind({ stdout }) > 0)
+                        await config.exec(`git merge ${branchStatus.upstreamBranchName}`, { stdout, dryRun });
+                    if (await branchStatus.resolveCommitsAhead({ stdout }) > 0)
+                        await config.exec(`git push ${branchStatus.upstream} ${branchStatus.branchName}`, { stdout, dryRun });
+                }, { stdout, dryRun });
+            }
+        }
+
+        await processStatus(status.master);
+        await processStatus(status.develop);
+
+        for (const feature of status.features)
+            await processStatus(feature);
+    }, { concurrency: 1 });
+}

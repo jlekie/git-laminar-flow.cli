@@ -1,6 +1,7 @@
 import { Command, Option } from 'clipanion';
 import * as Minimatch from 'minimatch';
 import * as Bluebird from 'bluebird';
+import * as _ from 'lodash';
 
 import * as Chalk from 'chalk';
 
@@ -18,6 +19,7 @@ import { BaseCommand } from './common';
 import { exec, execCmd, ExecOptions } from 'lib/exec';
 
 import { loadConfig, loadV2Config, Config, Release, Hotfix, Support } from 'lib/config';
+import { executeVscode } from 'lib/exec';
 
 export class ImportCommand extends BaseCommand {
     static paths = [['config', 'import']];
@@ -122,7 +124,7 @@ export class EditCommand extends BaseCommand {
 
         await FS.writeFile(tmpConfigPath, Yaml.dump(config.toRecursiveHash(), { lineWidth: 120 }), 'utf8');
         this.context.stdout.write(Chalk.yellow('Editing the config is an advanced feature. BE CAREFUL!\n'));
-        await executeVscodeEdit(tmpConfigPath, { cwd: config.path, stdout: this.context.stdout });
+        await executeVscode(['--wait', '-r', tmpConfigPath], { cwd: config.path, stdout: this.context.stdout });
 
         const rawConfig = await FS.readFile(tmpConfigPath, 'utf8')
             .then(content => Yaml.load(content))
@@ -144,6 +146,33 @@ export class EditCommand extends BaseCommand {
         // }
 
         await tmpDir.cleanup();
+    }
+}
+export class ViewCommand extends BaseCommand {
+    static paths = [['config', 'view']];
+
+    recursive = Option.Boolean('--recursive,-r');
+
+    static usage = Command.Usage({
+        description: 'View config',
+        category: 'Config'
+    });
+
+    public async executeCommand() {
+        const configPath = await this.resolveConfigPath();
+        if (!configPath)
+            throw new Error('Must specify a config URI');
+
+        const settings = await this.loadSettings();
+        const config = await loadV2Config(configPath, settings, { stdout: this.context.stdout, dryRun: this.dryRun });
+
+        const tmpDir = await Tmp.dir({
+            unsafeCleanup: true
+        });
+        const tmpConfigPath = Path.join(tmpDir.path, '.gitflow.yml');
+
+        await FS.writeFile(tmpConfigPath, Yaml.dump(this.recursive ? config.toRecursiveHash() : config.toHash(), { lineWidth: 120 }), 'utf8');
+        await executeVscode(['-r', tmpConfigPath], { cwd: config.path, stdout: this.context.stdout });
     }
 }
 
@@ -179,17 +208,4 @@ export class MigrateCommand extends BaseCommand {
             }
         }
     }
-}
-
-async function executeVscodeEdit(path: string, options: ExecOptions = {}) {
-    const termProgram = process.env['TERM_PROGRAM'];
-    const termProgramVersion = process.env['TERM_PROGRAM_VERSION'];
-
-    if (!termProgram || termProgram !== 'vscode')
-        throw new Error('Required environment variable TERM_PROGRAM missing');
-    if (!termProgramVersion)
-        throw new Error('Required environment variable TERM_PROGRAM_VERSION missing');
-
-    const vscodeCmd = termProgramVersion.endsWith('-insider') ? 'code-insiders' : 'code';
-    await exec(`${vscodeCmd} --wait -r ${path}`, options);
 }
