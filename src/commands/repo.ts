@@ -43,9 +43,7 @@ export class InitCommand extends BaseCommand {
             excluded: this.exclude
         });
 
-        await Bluebird.map(targetConfigs, config => config.init({ stdout: this.context.stdout, dryRun: this.dryRun, writeGitmdoulesConfig: this.writeGitmodules }), {
-            concurrency: 5
-        });
+        await Bluebird.map(targetConfigs, config => config.init({ stdout: this.context.stdout, dryRun: this.dryRun, writeGitmdoulesConfig: this.writeGitmodules }));
 
         // for (const config of targetConfigs)
         //     await config.init({ stdout: this.context.stdout, dryRun: this.dryRun });

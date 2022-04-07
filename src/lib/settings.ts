@@ -15,9 +15,9 @@ export const SettingsSchema = Zod.object({
 });
 
 export class Settings {
-    public readonly defaultGlfsRepository: string;
-    public readonly glfsRepositories: readonly GlfsRepository[];
-    public readonly vscodeExec?: string;
+    public defaultGlfsRepository: string;
+    public glfsRepositories: GlfsRepository[];
+    public vscodeExec?: string;
 
     public static parse(value: unknown) {
         return this.fromSchema(SettingsSchema.parse(value));
@@ -57,9 +57,9 @@ export class Settings {
     }
 }
 export class GlfsRepository {
-    public readonly name: string;
-    public readonly url: string;
-    public readonly apiKey?: string;
+    public name: string;
+    public url: string;
+    public apiKey?: string;
 
     public static parse(value: unknown) {
         return this.fromSchema(GlfsRepositorySchema.parse(value));
