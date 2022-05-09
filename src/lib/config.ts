@@ -15,20 +15,17 @@ import { v4 as Uuid } from 'uuid';
 
 import * as Zod from 'zod';
 
-import * as Crypto from 'crypto';
-
 import { Transform, TransformOptions } from 'stream';
 import { StringDecoder } from 'string_decoder';
 
 import {
-    ConfigSchema, ConfigSubmoduleSchema, ConfigFeatureSchema, ConfigReleaseSchema, ConfigHotfixSchema, ConfigSupportSchema, ConfigUriSchema, ElementSchema,
+    ConfigSchema, ConfigSubmoduleSchema, ConfigFeatureSchema, ConfigReleaseSchema, ConfigHotfixSchema, ConfigSupportSchema, ConfigUriSchema, ElementSchema, RecursiveConfigSchema, RecursiveConfigSubmoduleSchema,
     ConfigBase, SubmoduleBase, FeatureBase, ReleaseBase, HotfixBase, SupportBase,
     parseConfigReference
 } from '@jlekie/git-laminar-flow';
 
 import { exec, execCmd, ExecOptions } from './exec';
 import { Settings } from './settings';
-import { Delegated, DelegatedPreserve, Lazy, PromisifyAll } from './misc';
 
 function applyMixins(derivedCtor: any, constructors: any[]) {
     constructors.forEach((baseCtor) => {
@@ -83,6 +80,28 @@ class TestTransform extends Transform {
 
         callback();
     }
+}
+
+export function *resolveOrderedConfigs(configs: Config[], parent?: Config): Generator<Config[]> {
+    const filteredConfigs = configs.filter(c => c.parentConfig === parent);
+    for (const config of filteredConfigs)
+        for (const childFilteredConfigs of resolveOrderedConfigs(configs, config))
+            yield childFilteredConfigs;
+
+    if (filteredConfigs.length > 0)
+        yield filteredConfigs;
+}
+export async function *resolveFilteredOrderedConfigs(configs: Config[], { parent, filter }: Partial<{ parent: Config, filter: (config: Config) => boolean | Promise<boolean> }> = {}): AsyncGenerator<Config[]> {
+    const applicableConfigs = configs.filter(c => c.parentConfig === parent);
+    // console.log(applicableConfigs, parent)
+
+    for (const config of applicableConfigs)
+        for await (const childFilteredConfigs of resolveFilteredOrderedConfigs(configs, { parent: config, filter }))
+            yield childFilteredConfigs;
+
+    const filteredConfigs = filter ? await Bluebird.filter(applicableConfigs, filter) : [];
+    if (filteredConfigs.length > 0)
+        yield filteredConfigs;
 }
 
 export interface State {
@@ -242,7 +261,7 @@ export async function saveState(statePath: string, state: State) {
     await FS.writeFile(statePath, content, 'utf8');
 }
 
-export async function loadV2Config(uri: string, settings: Settings, { cwd, parentConfig, parentSubmodule, pathspecPrefix, stdout, dryRun }: LoadRepoConfigParams & ExecParams = {}) {
+export async function loadV2Config(uri: string, settings: Settings, { cwd, parentConfig, parentSubmodule, pathspecPrefix, stdout, dryRun, verify = true }: LoadRepoConfigParams & ExecParams = {}) {
     // stdout = stdout && TestTransform.create(stdout, Chalk.gray('[loadV2Config]'));
 
     cwd = Path.resolve(cwd ?? '.');
@@ -306,7 +325,11 @@ export async function loadV2Config(uri: string, settings: Settings, { cwd, paren
         }
     })();
 
-    await config.register(cwd, uri, config.calculateHash(), settings, parentConfig, parentSubmodule, pathspecPrefix);
+    await config.register(cwd, uri, config.calculateHash(), settings, {
+        verify
+    }, parentConfig, parentSubmodule, pathspecPrefix);
+
+    verify && await config.verify({ stdout, dryRun });
 
     return config;
 }
@@ -349,7 +372,9 @@ export async function loadConfig(path: string, settings: Settings, { cwd, parent
         : Config.createNew();
 
     const repoPath = cwd ?? Path.dirname(Path.resolve(path));
-    await config.register(repoPath, `file://${path}`, config.calculateHash(), settings, parentConfig, parentSubmodule, pathspecPrefix);
+    await config.register(repoPath, `file://${path}`, config.calculateHash(), settings, {
+        
+    }, parentConfig, parentSubmodule, pathspecPrefix);
 
     return config;
 }
@@ -359,6 +384,7 @@ export interface LoadRepoConfigParams {
     parentConfig?: Config;
     parentSubmodule?: Submodule;
     pathspecPrefix?: string;
+    verify?: boolean;
 }
 export async function loadRepoConfig(settings: Settings, { cwd, parentConfig, parentSubmodule, pathspecPrefix, stdout, dryRun }: LoadRepoConfigParams & ExecParams = {}) {
     stdout = stdout && TestTransform.create(stdout, Chalk.gray('[loadRepoConfig]'));
@@ -375,7 +401,9 @@ export async function loadRepoConfig(settings: Settings, { cwd, parentConfig, pa
         .then(hash => Config.parse(hash))
         .catch(() => Config.createNew());
 
-    await config.register(Path.resolve(cwd ?? '.'), 'branch://gitflow', config.calculateHash(), settings, parentConfig, parentSubmodule, pathspecPrefix);
+    await config.register(Path.resolve(cwd ?? '.'), 'branch://gitflow', config.calculateHash(), settings, {
+
+    }, parentConfig, parentSubmodule, pathspecPrefix);
 
     return config;
 }
@@ -580,7 +608,7 @@ export class Config {
     }
 
     // Register internals (initialize)
-    public async register(path: string, sourceUri: string, baseHash: string, settings: Settings, parentConfig?: Config, parentSubmodule?: Submodule, pathspec: string = 'root') {
+    public async register(path: string, sourceUri: string, baseHash: string, settings: Settings, loadRepoParams: Pick<LoadRepoConfigParams, 'verify'>, parentConfig?: Config, parentSubmodule?: Submodule, pathspec: string = 'root') {
         this.#initialized = true;
 
         this.#path = path;
@@ -598,7 +626,7 @@ export class Config {
         //         .then(hash => StateSchema.parse(hash))
         //     : {};
 
-        await Bluebird.map(this.submodules, i => i.register(this));
+        await Bluebird.map(this.submodules, i => i.register(this, loadRepoParams));
         await Bluebird.map(this.features, i => i.register(this));
         await Bluebird.map(this.releases, i => i.register(this));
         await Bluebird.map(this.hotfixes, i => i.register(this));
@@ -876,6 +904,15 @@ export class Config {
         await this.saveState(state);
     }
 
+    public async verify({ stdout, dryRun }: ExecParams = {}) {
+        const identifierPath = Path.join(this.path, '.glf', 'identifier');
+        if (await FS.pathExists(identifierPath)) {
+            const identifier = await FS.readFile(identifierPath, 'utf8');
+            if (identifier !== this.identifier)
+                throw new Error(`Source identifier verification failed (expected ${identifier} but received ${this.identifier})`);
+        }
+    }
+
     public resolveFeatureFqn(featureName: string) {
         return featureName;
         // const parts = featureName.split('/');
@@ -922,152 +959,160 @@ export class Config {
 
     // Initialize the config and its associated repo
     public async init({ stdout, dryRun, writeGitmdoulesConfig }: ExecParams & { writeGitmdoulesConfig?: boolean } = {}) {
-        await this.setStateValue('configUri', this.sourceUri);
-
         if (!this.managed) {
             stdout?.write(Chalk.yellow("Repo not managed, bypassing\n"));
 
-            if (writeGitmdoulesConfig && this.submodules.length > 0)
-                this.writeGitmodulesConfig({ stdout, dryRun });
-
-            return;
+            // Initialize submodules
+            for (const submodule of this.submodules)
+                await submodule.init({ stdout, dryRun });
         }
+        else {
+            // Either perform fetch for existing repo or clone/initialize new repo
+            if (await FS.pathExists(this.path)) {
+                if (await FS.pathExists(Path.resolve(this.path, '.git'))) {
+                    await exec(`git fetch --all --prune`, { cwd: this.path, stdout, dryRun });
+                }
+                else {
+                    const originUpstream = this.upstreams.find(r => r.name == 'origin');
+                    if (originUpstream) {
+                        await exec(`git init`, { cwd: this.path, stdout, dryRun });
+                        await exec(`git remote add ${originUpstream.name} ${originUpstream.url}`, { cwd: this.path, stdout, dryRun });
+                        await exec(`git fetch`, { cwd: this.path, stdout, dryRun });
 
-        // Either perform fetch for existing repo or clone/initialize new repo
-        if (await FS.pathExists(this.path)) {
-            if (await FS.pathExists(Path.resolve(this.path, '.git'))) {
-                await exec(`git fetch --all --prune`, { cwd: this.path, stdout, dryRun });
+                        if (!await this.remoteBranchExists('master', originUpstream.name, { stdout, dryRun })) {
+                            await exec(`git commit --allow-empty -m "initial commit"`, { cwd: this.path, stdout, dryRun });
+                        }
+                    }
+                    else {
+                        await exec(`git init`, { cwd: this.path, stdout, dryRun });
+                        await exec(`git commit --allow-empty -m "initial commit"`, { cwd: this.path, stdout, dryRun });
+                    }
+                }
             }
             else {
                 const originUpstream = this.upstreams.find(r => r.name == 'origin');
                 if (originUpstream) {
-                    await exec(`git init`, { cwd: this.path, stdout, dryRun });
-                    await exec(`git remote add ${originUpstream.name} ${originUpstream.url}`, { cwd: this.path, stdout, dryRun });
-                    await exec(`git fetch`, { cwd: this.path, stdout, dryRun });
+                    await exec(`git clone ${originUpstream.url} ${this.path}`, { stdout, dryRun });
 
                     if (!await this.branchExists('master', { stdout, dryRun })) {
                         await exec(`git commit --allow-empty -m "initial commit"`, { cwd: this.path, stdout, dryRun });
                     }
                 }
                 else {
+                    await FS.ensureDir(this.path);
                     await exec(`git init`, { cwd: this.path, stdout, dryRun });
                     await exec(`git commit --allow-empty -m "initial commit"`, { cwd: this.path, stdout, dryRun });
                 }
             }
-        }
-        else {
-            const originUpstream = this.upstreams.find(r => r.name == 'origin');
-            if (originUpstream) {
-                await exec(`git clone ${originUpstream.url} ${this.path}`, { stdout, dryRun });
 
-                if (!await this.branchExists('master', { stdout, dryRun })) {
-                    await exec(`git commit --allow-empty -m "initial commit"`, { cwd: this.path, stdout, dryRun });
+            // Add upstreams if missing
+            for (const upstream of this.upstreams) {
+                if (!await this.upstreamExists(upstream.name, { stdout, dryRun })) {
+                    await exec(`git remote add ${upstream.name} ${upstream.url}`, { cwd: this.path, stdout, dryRun });
+                    await exec(`git fetch`, { cwd: this.path, stdout, dryRun });
                 }
             }
-            else {
-                await FS.ensureDir(this.path);
-                await exec(`git init`, { cwd: this.path, stdout, dryRun });
-                await exec(`git commit --allow-empty -m "initial commit"`, { cwd: this.path, stdout, dryRun });
+
+            // Create master branch if missing
+            if (!await this.branchExists('master', { stdout, dryRun })) {
+                if (await this.remoteBranchExists('master', 'origin', { stdout, dryRun })) {
+                    const currentBranch = await this.resolveCurrentBranch({ stdout, dryRun }).catch(() => undefined);
+                    await exec(`git checkout -b master --track origin/master`, { cwd: this.path, stdout, dryRun });
+                    currentBranch && await this.checkoutBranch(currentBranch, { stdout, dryRun });
+                }
+                else {
+                    const initialSha = await this.execCmd('git rev-list --max-parents=0 HEAD', { stdout, dryRun });
+                    await this.createBranch('master', { source: initialSha, stdout, dryRun });
+                }
             }
+            // else if (await this.remoteBranchExists('master', 'origin', { stdout, dryRun }) && !(await this.resolveBranchUpstream('master', { stdout, dryRun }))) {
+            //     const currentBranch = await this.resolveCurrentBranch({ stdout, dryRun });
+
+            //     await this.checkoutBranch('master', { stdout, dryRun });
+            //     await this.exec('git branch -u origin/master', { stdout, dryRun });
+            //     await this.checkoutBranch(currentBranch, { stdout, dryRun });
+            // }
+
+            // Create develop branch if missing
+            if (!await this.branchExists('develop', { stdout, dryRun })) {
+                if (await this.remoteBranchExists('develop', 'origin', { stdout, dryRun })) {
+                    const currentBranch = await this.resolveCurrentBranch({ stdout, dryRun }).catch(() => undefined);
+                    await exec(`git checkout -b develop --track origin/develop`, { cwd: this.path, stdout, dryRun });
+                    currentBranch && await this.checkoutBranch(currentBranch, { stdout, dryRun });
+                }
+                else {
+                    const initialSha = await this.execCmd('git rev-list --max-parents=0 HEAD', { stdout, dryRun });
+                    await this.createBranch('develop', { source: initialSha, stdout, dryRun });
+                }
+
+                await this.checkoutBranch('develop', { stdout, dryRun });
+            }
+            // else if (await this.remoteBranchExists('develop', 'origin', { stdout, dryRun }) && !(await this.resolveBranchUpstream('develop', { stdout, dryRun }))) {
+            //     const currentBranch = await this.resolveCurrentBranch({ stdout, dryRun });
+
+            //     await this.checkoutBranch('develop', { stdout, dryRun });
+            //     await this.exec('git branch -u origin/develop', { stdout, dryRun });
+            //     await this.checkoutBranch(currentBranch, { stdout, dryRun });
+            // }
+
+            // // Create gitflow branch if missing
+            // if (!await this.branchExists('gitflow', { stdout, dryRun })) {
+            //     const currentBranch = await this.resolveCurrentBranch({ stdout, dryRun });
+
+            //     await this.checkoutBranch('gitflow', { orphan: true, stdout, dryRun });
+            //     await exec(`git reset HEAD -- .`, { cwd: this.path, stdout, dryRun });
+
+            //     const gitignorePath = Path.resolve(this.path, '.gitignore');
+            //     !dryRun && await FS.writeFile(gitignorePath, '*\n!*/\n');
+            //     stdout?.write(Chalk.gray(`.gitignore written to ${gitignorePath}\n`));
+            //     await exec('git add -f .gitignore', { cwd: this.path, stdout, dryRun });
+
+            //     await exec(`git commit --allow-empty -m "initial commit"`, { cwd: this.path, stdout, dryRun });
+
+            //     await this.checkoutBranch(currentBranch, { stdout, dryRun });
+            // }
+
+            // // Add origin upstream if missing
+            // if (this.parentSubmodule?.url && !await this.upstreamExists('origin', { stdout, dryRun }))
+            //     this.createUpstream('origin', this.parentSubmodule.url, { stdout, dryRun });
+
+            // Initialize submodules
+            for (const submodule of this.submodules)
+                await submodule.init({ stdout, dryRun });
+
+            // Initialize features
+            for (const feature of this.features)
+                await feature.init({ stdout, dryRun });
+
+            // Initialize releases
+            for (const release of this.releases)
+                await release.init({ stdout, dryRun });
+
+            // Initialize hotfixes
+            for (const hotfix of this.hotfixes)
+                await hotfix.init({ stdout, dryRun });
+
+            // Initialize supports
+            for (const support of this.supports)
+                await support.init({ stdout, dryRun });
+
+            // // Save updated config to disk
+            // await this.save({ stdout, dryRun });
         }
-
-        // Add upstreams if missing
-        for (const upstream of this.upstreams) {
-            if (!await this.upstreamExists(upstream.name, { stdout, dryRun })) {
-                await exec(`git remote add ${upstream.name} ${upstream.url}`, { cwd: this.path, stdout, dryRun });
-                await exec(`git fetch`, { cwd: this.path, stdout, dryRun });
-            }
-        }
-
-        // Create master branch if missing
-        if (!await this.branchExists('master', { stdout, dryRun })) {
-            if (await this.remoteBranchExists('master', 'origin', { stdout, dryRun })) {
-                const currentBranch = await this.resolveCurrentBranch({ stdout, dryRun });
-                await exec(`git checkout -b master --track origin/master`, { cwd: this.path, stdout, dryRun });
-                await this.checkoutBranch(currentBranch, { stdout, dryRun });
-            }
-            else {
-                const initialSha = await this.execCmd('git rev-list --max-parents=0 HEAD', { stdout, dryRun });
-                await this.createBranch('master', { source: initialSha, stdout, dryRun });
-            }
-        }
-        // else if (await this.remoteBranchExists('master', 'origin', { stdout, dryRun }) && !(await this.resolveBranchUpstream('master', { stdout, dryRun }))) {
-        //     const currentBranch = await this.resolveCurrentBranch({ stdout, dryRun });
-
-        //     await this.checkoutBranch('master', { stdout, dryRun });
-        //     await this.exec('git branch -u origin/master', { stdout, dryRun });
-        //     await this.checkoutBranch(currentBranch, { stdout, dryRun });
-        // }
-
-        // Create develop branch if missing
-        if (!await this.branchExists('develop', { stdout, dryRun })) {
-            if (await this.remoteBranchExists('develop', 'origin', { stdout, dryRun })) {
-                const currentBranch = await this.resolveCurrentBranch({ stdout, dryRun });
-                await exec(`git checkout -b develop --track origin/develop`, { cwd: this.path, stdout, dryRun });
-                await this.checkoutBranch(currentBranch, { stdout, dryRun });
-            }
-            else {
-                const initialSha = await this.execCmd('git rev-list --max-parents=0 HEAD', { stdout, dryRun });
-                await this.createBranch('develop', { source: initialSha, stdout, dryRun });
-            }
-
-            await this.checkoutBranch('develop', { stdout, dryRun });
-        }
-        // else if (await this.remoteBranchExists('develop', 'origin', { stdout, dryRun }) && !(await this.resolveBranchUpstream('develop', { stdout, dryRun }))) {
-        //     const currentBranch = await this.resolveCurrentBranch({ stdout, dryRun });
-
-        //     await this.checkoutBranch('develop', { stdout, dryRun });
-        //     await this.exec('git branch -u origin/develop', { stdout, dryRun });
-        //     await this.checkoutBranch(currentBranch, { stdout, dryRun });
-        // }
-
-        // // Create gitflow branch if missing
-        // if (!await this.branchExists('gitflow', { stdout, dryRun })) {
-        //     const currentBranch = await this.resolveCurrentBranch({ stdout, dryRun });
-
-        //     await this.checkoutBranch('gitflow', { orphan: true, stdout, dryRun });
-        //     await exec(`git reset HEAD -- .`, { cwd: this.path, stdout, dryRun });
-
-        //     const gitignorePath = Path.resolve(this.path, '.gitignore');
-        //     !dryRun && await FS.writeFile(gitignorePath, '*\n!*/\n');
-        //     stdout?.write(Chalk.gray(`.gitignore written to ${gitignorePath}\n`));
-        //     await exec('git add -f .gitignore', { cwd: this.path, stdout, dryRun });
-
-        //     await exec(`git commit --allow-empty -m "initial commit"`, { cwd: this.path, stdout, dryRun });
-
-        //     await this.checkoutBranch(currentBranch, { stdout, dryRun });
-        // }
-
-        // // Add origin upstream if missing
-        // if (this.parentSubmodule?.url && !await this.upstreamExists('origin', { stdout, dryRun }))
-        //     this.createUpstream('origin', this.parentSubmodule.url, { stdout, dryRun });
 
         // Update .gitmodules config with submodules
         if (writeGitmdoulesConfig && this.submodules.length > 0)
             this.writeGitmodulesConfig({ stdout, dryRun });
 
-        // // Initialize submodules
-        // for (const submodule of this.submodules)
-        //     await submodule.init({ stdout, dryRun });
+        const sourceUriPath = Path.join(this.path, '.glf', 'source_uri');
+        await FS.outputFile(sourceUriPath, this.sourceUri, {
+            encoding: 'utf8'
+        });
 
-        // Initialize features
-        for (const feature of this.features)
-            await feature.init({ stdout, dryRun });
-
-        // Initialize releases
-        for (const release of this.releases)
-            await release.init({ stdout, dryRun });
-
-        // Initialize hotfixes
-        for (const hotfix of this.hotfixes)
-            await hotfix.init({ stdout, dryRun });
-
-        // Initialize supports
-        for (const support of this.supports)
-            await support.init({ stdout, dryRun });
-
-        // // Save updated config to disk
-        // await this.save({ stdout, dryRun });
+        const identifierPath = Path.join(this.path, '.glf', 'identifier');
+        await FS.writeFile(identifierPath, this.identifier, {
+            encoding: 'utf8'
+        });
     }
 
     public writeGitmodulesConfig({ stdout, dryRun }: ExecParams = {}) {
@@ -1317,12 +1362,12 @@ export class Config {
             .catch(() => true);
     }
 
-    public async merge(branchName: string, { squash, message, noCommit, strategy, stdout, dryRun }: ExecParams & MergeParams = {}) {
+    public async merge(branchName: string, { squash, message, noCommit, strategy, noFastForward, stdout, dryRun }: ExecParams & MergeParams = {}) {
         if (squash) {
-            await exec(`git merge --squash ${branchName}${message ? ` -m "${message}"` : ''}${noCommit ? ' --no-commit' : ''}${strategy ? ` -X ${strategy}` : ''}`, { cwd: this.path, stdout, dryRun });
+            await exec(`git merge --squash ${branchName}${noFastForward ? ' --no-ff' : ''}${message ? ` -m "${message}"` : ''}${noCommit ? ' --no-commit' : ''}${strategy ? ` -X ${strategy}` : ''}`, { cwd: this.path, stdout, dryRun });
         }
         else {
-            await exec(`git merge ${branchName}${message ? ` -m "${message}"` : ''}${noCommit ? ' --no-commit' : ''}${strategy ? ` -X ${strategy}` : ''}`, { cwd: this.path, stdout, dryRun });
+            await exec(`git merge ${branchName}${noFastForward ? ' --no-ff' : ''}${message ? ` -m "${message}"` : ''}${noCommit ? ' --no-commit' : ''}${strategy ? ` -X ${strategy}` : ''}`, { cwd: this.path, stdout, dryRun });
         }
     }
     public async abortMerge({ stdout, dryRun }: ExecParams = {}) {
@@ -1431,7 +1476,7 @@ export class Config {
             this.#baseHash = baseHash;
     }
 
-    public toRecursiveHash() {
+    public toRecursiveHash(): Zod.infer<typeof RecursiveConfigSchema> {
         return {
             ...this.toHash(),
             submodules: this.submodules.map(s => s.toRecursiveHash())
@@ -1444,6 +1489,33 @@ export class Config {
     //         submodules: this.submodules.map(i => i.toJSON())
     //     }
     // }
+
+    public async hasNestedElement(uri: string) {
+        for (const submodule of this.submodules) {
+            if (await submodule.config.hasElement(uri) || await submodule.config.hasNestedElement(uri))
+                return true;
+        }
+
+        return false;
+    }
+
+    public async swapCheckout<T>(branchName: string, handler: () => T | Promise<T>, { stdout, dryRun }: ExecParams = {}) {
+        const currentBranch = await this.resolveCurrentBranch({ stdout, dryRun });
+        const currentBranchActive = currentBranch === branchName;
+
+        if (!currentBranchActive)
+            await this.checkoutBranch(branchName, { stdout, dryRun });
+
+        try {
+            const result = await handler();
+
+            return result;
+        }
+        finally {
+            if (!currentBranchActive)
+                await this.checkoutBranch(currentBranch, { stdout, dryRun });
+        }
+    }
 }
 
 export interface Config extends ConfigBase {}
@@ -1491,11 +1563,11 @@ export class Submodule {
         this.tags = params.tags ?? [];
     }
 
-    public async register(parentConfig: Config) {
+    public async register(parentConfig: Config, loadRepoParams: Pick<LoadRepoConfigParams, 'verify'>) {
         this.#initialized = true;
 
         this.#parentConfig = parentConfig;
-        this.#config = await this.loadConfig();
+        this.#config = await this.loadConfig(loadRepoParams);
     }
 
     public resolvePath() {
@@ -1503,7 +1575,10 @@ export class Submodule {
     }
 
     public async init({ stdout, dryRun }: ExecParams = {}) {
-        await this.config.init({ stdout, dryRun });
+        // await this.config.init({ stdout, dryRun });
+
+        if (await this.parentConfig.execCmd(`git submodule status ${this.path}`, { stdout, dryRun }).then(r => false).catch(() => true) && this.config.upstreams.length > 0)
+            await this.parentConfig.exec(`git submodule add -f --name ${this.name} ${this.config.upstreams[0].url} ${this.path}`, { stdout, dryRun });
     }
 
     public async fetch({ stdout, dryRun }: ExecParams = {}) {
@@ -1518,8 +1593,9 @@ export class Submodule {
         await exec(`git clone ${originRemote.url} ${repoPath}`, { stdout, dryRun })
     }
 
-    public async loadConfig() {
+    public async loadConfig(loadRepoParams: Pick<LoadRepoConfigParams, 'verify'>) {
         const config = await loadV2Config(this.url ?? 'branch://gitflow', this.parentConfig.settings, {
+            ...loadRepoParams,
             cwd: this.resolvePath(),
             parentConfig: this.parentConfig,
             parentSubmodule: this,
@@ -1530,10 +1606,10 @@ export class Submodule {
         return config;
     }
 
-    public toRecursiveHash() {
+    public toRecursiveHash(): Zod.infer<typeof RecursiveConfigSubmoduleSchema> {
         return {
             ...this.toHash(),
-            config: this.config.toHash()
+            config: this.config.toRecursiveHash()
         }
     }
 }
@@ -1622,6 +1698,10 @@ export class Feature {
 
     public resolveCommitMessageTemplate() {
         return _.template(this.parentConfig.featureMessageTemplate ?? 'Feature <%= featureName %> Merged');
+    }
+
+    public swapCheckout<T>(handler: () => T | Promise<T>, { stdout, dryRun }: ExecParams = {}) {
+        return this.parentConfig.swapCheckout(this.branchName, handler, { stdout, dryRun });
     }
 }
 
@@ -1713,7 +1793,7 @@ export class Release {
     }
 
     public resolveCommitMessageTemplate() {
-        return _.template(this.parentConfig.releaseMessageTemplate ?? '<% if (intermediate) { %>Release <%= releaseName %> Merged<% } else { %>Intermediate Release Merged<% } %>');
+        return _.template(this.parentConfig.releaseMessageTemplate ?? '<% if (intermediate) { %>Intermediate Release Merged<% } else { %>Release "<%= releaseName %>" Merged<% } %>');
     }
     public resolveTagTemplate() {
         return _.template(this.parentConfig.releaseTagTemplate ?? '<%= releaseName %>');
@@ -1808,7 +1888,7 @@ export class Hotfix {
     }
 
     public resolveCommitMessageTemplate() {
-        return _.template(this.parentConfig.hotfixMessageTemplate ?? '<% if (intermediate) { %>Hotfix <%= hotfixName %> Merged<% } else { %>Intermediate Hotfix Merged<% } %>');
+        return _.template(this.parentConfig.hotfixMessageTemplate ?? '<% if (intermediate) { %>Intermediate Hotfix Merged<% } else { %>Hotfix <%= hotfixName %> Merged<% } %>');
     }
     public resolveTagTemplate() {
         return _.template(this.parentConfig.hotfixTagTemplate ?? '<%= hotfixName %>');
@@ -1947,6 +2027,7 @@ export interface MergeParams {
     squash?: boolean;
     message?: string;
     noCommit?: boolean;
+    noFastForward?: boolean;
     strategy?: string;
 }
 export interface CheckoutBranchParams {

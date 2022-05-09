@@ -7,7 +7,7 @@ import * as FS from 'fs-extra';
 
 import * as Chalk from 'chalk';
 
-import { Config, Feature, Release, Hotfix, Support, Element } from 'lib/config';
+import { Config, Feature, Release, Hotfix, Support, Element, resolveOrderedConfigs, resolveFilteredOrderedConfigs } from 'lib/config';
 
 export interface CommonParams {
     stdout?: Stream.Writable;
@@ -243,10 +243,13 @@ export async function createSupport(rootConfig: Config, { stdout, dryRun, ...par
 }
 
 export async function deleteFeature(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
-    name: ActionParam<string>;
+    name: ActionParam<string, { features: string[] }>;
     configs: ActionParam<Config[], { configs: Config[] }>;
 }>) {
-    const featureName = await params.name();
+    const features = await Bluebird.map(rootConfig.flattenConfigs(), config => config.features)
+        .then(features => _(features).flatten().map(r => r.name).uniq().value());
+
+    const featureName = await params.name({ features });
 
     const allConfigs = await Bluebird.filter(rootConfig.flattenConfigs(), c => c.hasElement(`feature://${featureName}`));
     if (!allConfigs.length)
@@ -359,71 +362,97 @@ export async function closeFeature(rootConfig: Config, { stdout, dryRun, ...para
 }>) {
     const featureName = await params.name();
 
-    const allConfigs = await Bluebird.filter(rootConfig.flattenConfigs(), c => c.hasElement(`feature://${featureName}`));
-    if (!allConfigs.length)
+    const allConfigs = rootConfig.flattenConfigs();
+    const applicableConfigs = await Bluebird.filter(rootConfig.flattenConfigs(), c => c.hasElement(`feature://${featureName}`));
+    if (!applicableConfigs.length)
         return;
 
-    const configs = await params.configs({ configs: allConfigs });
-    for (const config of configs) {
-        const { feature } = await config.findElement('feature', featureName);
+    // const parentHasFeature = (c: Config) => {
+    //     let count = 0;
+    //     if (c.features.some(f => f.name == featureName))
+    //         count++;
 
-        !dryRun && await config.setStateValue('activeClosingFeature', feature.uri);
+    //     if (c.parentConfig)
+    //         count += parentHasFeature(c.parentConfig);
 
-        if (!params.abort({ config })) {
-            const commitMessage = feature.resolveCommitMessageTemplate()({
-                featureName: feature.name
-            });
+    //     return count;
+    // }
 
-            if (!await config.getStateValue([ feature.stateKey, 'closing', 'develop' ], 'boolean')) {
-                if (await config.isDirty({ stdout }))
-                    throw new Error(`Cannot merge, please commit all outstanding changes`);
-
-                await config.checkoutBranch(feature.parentSupport?.developBranchName ?? 'develop', { stdout, dryRun });
-                if (await config.isDirty({ stdout }))
-                    throw new Error(`Cannot merge, develop has uncommited or staged changes`);
-
-                await config.merge(feature.branchName, { squash: true, stdout, dryRun }).catch(async err => {
-                    if (await FS.pathExists(Path.join(config.path, '.git/SQUASH_MSG')))
-                        await FS.writeFile(Path.join(config.path, '.git/SQUASH_MSG'), commitMessage);
-
-                    if (params.confirm) {
-                        while (await config.isMergeInProgress({ stdout }))
-                            await params.confirm?.({ config, message: 'Continue with merge' });
-                    }
-                    else {
-                        throw new Error(`Could not merge changes; ${err}`);
-                    }
-                });
-
-                if (await config.hasStagedChanges({ stdout, dryRun }))
-                    await config.commit(commitMessage, { stdout, dryRun });
-
-                !dryRun && await config.setStateValue([ feature.stateKey, 'closing', 'develop' ], true);
-            }
-        }
-
-        if (await config.branchExists(feature.branchName, { stdout, dryRun }) && await params.deleteLocalBranch?.({ config }))
-            await config.deleteBranch(feature.branchName, { stdout, dryRun });
-
-        if (await config.remoteBranchExists(feature.branchName, 'origin', { stdout, dryRun }) && await params.deleteRemoteBranch?.({ config }))
-            await config.deleteRemoteBranch(feature.branchName, 'origin', { stdout, dryRun });
-
-        if (!dryRun)
-            await (feature.parentSupport ?? feature.parentConfig).deleteFeature(feature);
-
-        await config.save({ stdout: stdout, dryRun: dryRun });
+    const configs = await params.configs({ configs: applicableConfigs });
+    for await (const groupedConfigs of resolveFilteredOrderedConfigs(allConfigs, { filter:  c => configs.indexOf(c) >= 0 })) {
+        console.log(groupedConfigs.map(c => c.pathspec))
+        // for (const config of groupedConfigs) {
+        //     console.log(config.pathspec)
+        // }
     }
+    // for (const config of _.orderBy(configs, c => parentHasFeature(c), 'desc')) {
+    //     if (await config.hasNestedElement(`feature://${featureName}`)) {
+    //         stdout?.write('Submodules contain unclosed feature\n');
+    //         continue;
+    //     }
+
+    //     const { feature } = await config.findElement('feature', featureName);
+
+    //     !dryRun && await config.setStateValue('activeClosingFeature', feature.uri);
+
+    //     if (!params.abort({ config })) {
+    //         const commitMessage = feature.resolveCommitMessageTemplate()({
+    //             featureName: feature.name
+    //         });
+
+    //         if (!await config.getStateValue([ feature.stateKey, 'closing', 'develop' ], 'boolean')) {
+    //             if (await config.isDirty({ stdout }))
+    //                 throw new Error(`Cannot merge, please commit all outstanding changes`);
+
+    //             await config.checkoutBranch(feature.parentSupport?.developBranchName ?? 'develop', { stdout, dryRun });
+    //             if (await config.isDirty({ stdout }))
+    //                 throw new Error(`Cannot merge, develop has uncommited or staged changes`);
+
+    //             await config.merge(feature.branchName, { squash: true, stdout, dryRun }).catch(async err => {
+    //                 if (await FS.pathExists(Path.join(config.path, '.git/SQUASH_MSG')))
+    //                     await FS.writeFile(Path.join(config.path, '.git/SQUASH_MSG'), commitMessage);
+
+    //                 if (params.confirm) {
+    //                     while (await config.isMergeInProgress({ stdout }))
+    //                         await params.confirm?.({ config, message: 'Continue with merge' });
+    //                 }
+    //                 else {
+    //                     throw new Error(`Could not merge changes; ${err}`);
+    //                 }
+    //             });
+
+    //             if (await config.hasStagedChanges({ stdout, dryRun }))
+    //                 await config.commit(commitMessage, { stdout, dryRun });
+
+    //             !dryRun && await config.setStateValue([ feature.stateKey, 'closing', 'develop' ], true);
+    //         }
+    //     }
+
+    //     if (await config.branchExists(feature.branchName, { stdout, dryRun }) && await params.deleteLocalBranch?.({ config }))
+    //         await config.deleteBranch(feature.branchName, { stdout, dryRun });
+
+    //     if (await config.remoteBranchExists(feature.branchName, 'origin', { stdout, dryRun }) && await params.deleteRemoteBranch?.({ config }))
+    //         await config.deleteRemoteBranch(feature.branchName, 'origin', { stdout, dryRun });
+
+    //     if (!dryRun)
+    //         await (feature.parentSupport ?? feature.parentConfig).deleteFeature(feature);
+
+    //     await config.save({ stdout: stdout, dryRun: dryRun });
+    // }
 }
 
 export async function closeRelease(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
-    name: ActionParam<string>;
+    name: ActionParam<string, { releases: string[] }>;
     configs: ActionParam<Config[], { configs: Config[] }>;
     confirm?: ActionParam<boolean, { config: Config, message: string }>;
     abort: ActionParam<boolean, { config: Config }>;
     deleteLocalBranch?: ActionParam<boolean, { config: Config }>;
     deleteRemoteBranch?: ActionParam<boolean, { config: Config }>;
 }>) {
-    const releaseName = await params.name();
+    const releases = await Bluebird.map(rootConfig.flattenConfigs(), config => config.releases)
+        .then(releases => _(releases).flatten().map(r => r.name).uniq().value());
+
+    const releaseName = await params.name({ releases });
 
     const allConfigs = await Bluebird.filter(rootConfig.flattenConfigs(), c => c.hasElement(`release://${releaseName}`));
     if (!allConfigs.length)
@@ -453,9 +482,9 @@ export async function closeRelease(rootConfig: Config, { stdout, dryRun, ...para
                 if (await config.isDirty({ stdout }))
                     throw new Error(`Cannot merge, develop has uncommited or staged changes`);
 
-                await config.merge(release.branchName, { squash: true, stdout, dryRun }).catch(async err => {
-                    if (await FS.pathExists(Path.join(config.path, '.git/SQUASH_MSG')))
-                        await FS.writeFile(Path.join(config.path, '.git/SQUASH_MSG'), commitMessage);
+                await config.merge(release.branchName, { noFastForward: true, message: commitMessage, stdout, dryRun }).catch(async err => {
+                    if (await FS.pathExists(Path.join(config.path, '.git/MERGE_MSG')))
+                        await FS.writeFile(Path.join(config.path, '.git/MERGE_MSG'), commitMessage);
 
                     if (params.confirm) {
                         while (await config.isMergeInProgress({ stdout }))
@@ -477,9 +506,9 @@ export async function closeRelease(rootConfig: Config, { stdout, dryRun, ...para
                 if (await config.isDirty({ stdout }))
                     throw new Error(`Cannot merge, master has uncommited or staged changes`);
 
-                await config.merge(release.branchName, { squash: true, stdout, dryRun }).catch(async err => {
-                    if (await FS.pathExists(Path.join(config.path, '.git/SQUASH_MSG')))
-                        await FS.writeFile(Path.join(config.path, '.git/SQUASH_MSG'), commitMessage);
+                await config.merge(release.branchName, { message: commitMessage, noFastForward: true, stdout, dryRun }).catch(async err => {
+                    if (await FS.pathExists(Path.join(config.path, '.git/MERGE_MSG')))
+                        await FS.writeFile(Path.join(config.path, '.git/MERGE_MSG'), commitMessage);
 
                     if (params.confirm) {
                         while (await config.isMergeInProgress({ stdout }))
@@ -513,28 +542,76 @@ export async function closeRelease(rootConfig: Config, { stdout, dryRun, ...para
     }
 }
 
-export async function syncFeature(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
-    name: ActionParam<string>;
+export async function mergeFeature(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
+    name: ActionParam<string, { features: string[] }>;
+    source: ActionParam<string, { config: Config }>;
     configs: ActionParam<Config[], { configs: Config[] }>;
 }>) {
-    const featureName = await params.name();
+    const features = await Bluebird.map(rootConfig.flattenConfigs(), config => config.features)
+        .then(features => _(features).flatten().map(r => r.name).uniq().value());
+
+    const featureName = await params.name({ features });
 
     const allConfigs = await Bluebird.filter(rootConfig.flattenConfigs(), c => c.hasElement(`feature://${featureName}`));
     if (!allConfigs.length)
         return;
     
     const configs = await params.configs({ configs: allConfigs });
-    for (const config of configs) {
+    await Bluebird.map(Bluebird.mapSeries(configs, async config => {
+        return {
+            config,
+            source: await params.source({ config }),
+        };
+    }), async ({ config, source }) => {
+        const { feature } = await config.findElement('feature', featureName);
+        const sourceBranch = await config.parseElement(source).then(sourceElement => {
+            if (sourceElement.type == 'branch') {
+                return sourceElement.branch;
+            }
+            else {
+                throw new Error(`Unsupported source type ${sourceElement.type}`);
+            }
+        });
+
+        if (!await config.resolveCurrentBranch({ stdout, dryRun }).then(currentBranch => currentBranch === feature.branchName))
+            await feature.checkoutBranch({ stdout, dryRun });
+
+        await config.merge(sourceBranch, { stdout, dryRun });
+    });
+}
+
+export async function syncFeature(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
+    name: ActionParam<string, { features: string[] }>;
+    configs: ActionParam<Config[], { configs: Config[] }>;
+    push: ActionParam<boolean, { config: Config }>;
+}>) {
+    const features = await Bluebird.map(rootConfig.flattenConfigs(), config => config.features)
+        .then(features => _(features).flatten().map(r => r.name).uniq().value());
+
+    const featureName = await params.name({ features });
+
+    const allConfigs = await Bluebird.filter(rootConfig.flattenConfigs(), c => c.hasElement(`feature://${featureName}`));
+    if (!allConfigs.length)
+        return;
+    
+    const configs = await params.configs({ configs: allConfigs });
+    await Bluebird.map(Bluebird.mapSeries(configs, async config => {
+        return {
+            config,
+            push: await params.push({ config })
+        };
+    }), async ({ config, push }) => {
         const { feature } = await config.findElement('feature', featureName);
 
-        if (await config.branchExists(feature.branchName, { stdout, dryRun }))
-            await config.deleteBranch(feature.branchName, { stdout, dryRun });
-
-        if (!dryRun)
-            await (feature.parentSupport ?? feature.parentConfig).deleteFeature(feature);
-
-        await config.save({ stdout: stdout, dryRun: dryRun });
-    }
+        await feature.swapCheckout(async () => {
+            if (feature.upstream) {
+                await config.exec(`git merge ${feature.upstream}/${feature.branchName}`, { stdout, dryRun });
+    
+                if (push)
+                    await config.exec(`git push -u ${feature.upstream} ${feature.branchName}`, { stdout, dryRun });
+            }
+        }, { stdout, dryRun });
+    });
 }
 
 export async function commit(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
@@ -562,6 +639,7 @@ export async function commit(rootConfig: Config, { stdout, dryRun, ...params }: 
 
 export async function sync(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
     configs: ActionParam<Config[], { configs: Config[] }>;
+    push: ActionParam<boolean>;
 }>) {
     const allConfigs = rootConfig.flattenConfigs();
     const statuses = await Bluebird.map(allConfigs, async config => {
@@ -582,7 +660,7 @@ export async function sync(rootConfig: Config, { stdout, dryRun, ...params }: Ac
             master,
             develop,
             features,
-            applicable: master.differs || develop.differs
+            applicable: master.differs || develop.differs || features.some(f => f.differs)
         };
     }).then(statuses => _(statuses).compact().keyBy(s => s.identifier).value());
 
@@ -603,8 +681,8 @@ export async function sync(rootConfig: Config, { stdout, dryRun, ...params }: Ac
                 await config.checkout(branchStatus.branchName, async () => {
                     if (await branchStatus.resolveCommitsBehind({ stdout }) > 0)
                         await config.exec(`git merge ${branchStatus.upstreamBranchName}`, { stdout, dryRun });
-                    if (await branchStatus.resolveCommitsAhead({ stdout }) > 0)
-                        await config.exec(`git push ${branchStatus.upstream} ${branchStatus.branchName}`, { stdout, dryRun });
+                    if (await params.push() && await branchStatus.resolveCommitsAhead({ stdout }) > 0)
+                        await config.exec(`git push -u ${branchStatus.upstream} ${branchStatus.branchName}`, { stdout, dryRun });
                 }, { stdout, dryRun });
             }
         }

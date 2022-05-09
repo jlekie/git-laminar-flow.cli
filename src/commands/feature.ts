@@ -11,7 +11,7 @@ import * as Prompts from 'prompts';
 import { BaseCommand, BaseInteractiveCommand, AnswersSchema } from './common';
 
 import { loadV2Config, Config, Feature, Support } from 'lib/config';
-import { closeFeature, createFeature, deleteFeature } from 'lib/actions';
+import { closeFeature, createFeature, deleteFeature, mergeFeature, syncFeature } from 'lib/actions';
 
 export class CreateInteractiveCommand extends BaseInteractiveCommand {
     static paths = [['feature', 'create'], ['create', 'feature']];
@@ -130,9 +130,10 @@ export class DeleteInteractiveCommand extends BaseInteractiveCommand {
         const rootConfig = await this.loadConfig();
 
         await deleteFeature(rootConfig, {
-            name: () => this.prompt('featureName', Zod.string().nonempty(), {
-                type: 'text',
-                message: 'Feature Name'
+            name: ({ features }) => this.createOverridablePrompt('featureName', Zod.string().nonempty(), {
+                type: 'select',
+                message: 'Feature Name',
+                choices: features.map(r => ({ title: r, value: r }))
             }),
             configs: ({ configs }) => this.prompt('configs', Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()), {
                 type: 'multiselect',
@@ -189,11 +190,11 @@ export class CommitCommand extends BaseCommand {
     }
 }
 
-export class SyncCommand extends BaseCommand {
+export class SyncInteractiveCommand extends BaseInteractiveCommand {
     static paths = [['feature', 'sync']];
 
-    featureName = Option.String('--feature', { required: true });
-    branchName = Option.String('--branch', 'develop');
+    include = Option.Array('--include');
+    exclude = Option.Array('--exclude');
 
     static usage = Command.Usage({
         description: 'Sync feature from branch',
@@ -201,68 +202,67 @@ export class SyncCommand extends BaseCommand {
     });
 
     public async executeCommand() {
-        const config = await this.loadConfig();
-        const featureFqn = config.resolveFeatureFqn(this.featureName);
+        const rootConfig = await this.loadConfig();
 
-        const features = config.findFeatures(featureFqn);
-        await Bluebird.map(features, async feature => {
-            const baseBranch = await feature.parentConfig.resolveCurrentBranch({ stdout: this.context.stdout });
-
-            try {
-                await feature.checkoutBranch({ stdout: this.context.stdout, dryRun: this.dryRun })
-                await feature.parentConfig.merge(this.branchName, { stdout: this.context.stdout, dryRun: this.dryRun }).catch(async () => {
-                    this.context.stdout.write(Chalk.yellow(`Merge failed, aborting...\n`));
-                    await feature.parentConfig.abortMerge({ stdout: this.context.stdout, dryRun: this.dryRun });
-                });
-            }
-            finally {
-                if (baseBranch)
-                    await feature.parentConfig.checkoutBranch(baseBranch, { stdout: this.context.stdout, dryRun: this.dryRun });
-            }
-        }, { concurrency: 1 });
+        await syncFeature(rootConfig, {
+            name: ({ features }) => this.createOverridablePrompt('featureName', Zod.string().nonempty(), {
+                type: 'select',
+                message: 'Feature Name',
+                choices: features.map(r => ({ title: r, value: r }))
+            }),
+            configs: ({ configs }) => this.createOverridablePrompt('configs', Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()), {
+                type: 'multiselect',
+                message: 'Select Modules',
+                choices: configs.map(c => ({ title: c.pathspec, value: c.identifier, selected: true }))
+            }),
+            push: ({ config }) => this.createOverridablePrompt('push', Zod.boolean(), {
+                type: 'confirm',
+                message: `[${Chalk.magenta(config.pathspec)}] Push to origin`,
+                initial: false
+            }),
+            stdout: this.context.stdout,
+            dryRun: this.dryRun
+        });
     }
 }
 
-export class MergeCommand extends BaseCommand {
+export class MergeInteractiveCommand extends BaseInteractiveCommand {
     static paths = [['feature', 'merge']];
 
-    featureName = Option.String('--feature', { required: true });
-    squash = Option.Boolean('--squash', false);
+    include = Option.Array('--include');
+    exclude = Option.Array('--exclude');
 
     static usage = Command.Usage({
-        description: 'Merge feature into develop',
+        description: 'Merge feature from branch',
         category: 'Feature'
     });
 
     public async executeCommand() {
-        const config = await this.loadConfig();
-        const featureFqn = config.resolveFeatureFqn(this.featureName);
+        const rootConfig = await this.loadConfig();
+        // const targetConfigs = await rootConfig.resolveFilteredConfigs({
+        //     included: this.include,
+        //     excluded: this.exclude
+        // });
 
-        const features = config.findFeatures(featureFqn);
-        await Bluebird.map(features, async feature => {
-            try {
-                if (await feature.parentConfig.isDirty({ stdout: this.context.stdout }))
-                    throw new Error(`Workspace ${feature.parentConfig.path} has uncommitted changes, aborting`);
-
-                const baseBranch = await feature.parentConfig.resolveCurrentBranch({ stdout: this.context.stdout });
-
-                try {
-                    await feature.parentConfig.checkoutBranch('develop', { stdout: this.context.stdout, dryRun: this.dryRun })
-                    await feature.parentConfig.merge(feature.branchName, { squash: this.squash, stdout: this.context.stdout, dryRun: this.dryRun }).catch(async () => {
-                        this.context.stdout.write(Chalk.yellow(`Merge failed, aborting...\n`));
-                        await feature.parentConfig.abortMerge({ stdout: this.context.stdout, dryRun: this.dryRun });
-                    });
-                    await feature.parentConfig.commit(`feature ${feature.name} merge`, { stdout: this.context.stdout, dryRun: this.dryRun });
-                }
-                finally {
-                    if (baseBranch)
-                        await feature.parentConfig.checkoutBranch(baseBranch, { stdout: this.context.stdout, dryRun: this.dryRun });
-                }
-            }
-            catch (err) {
-                this.context.stderr.write(Chalk.red(err.toString()) + '\n');
-            }
-        }, { concurrency: 1 });
+        await mergeFeature(rootConfig, {
+            name: ({ features }) => this.createOverridablePrompt('featureName', Zod.string().nonempty(), {
+                type: 'select',
+                message: 'Feature Name',
+                choices: features.map(r => ({ title: r, value: r }))
+            }),
+            source: ({ config }) => this.createOverridablePrompt('source', Zod.string().nonempty(), {
+                type: 'text',
+                message: `[${Chalk.magenta(config.pathspec)}] Merge source`,
+                initial: 'branch://develop'
+            }),
+            configs: ({ configs }) => this.createOverridablePrompt('configs', Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()), {
+                type: 'multiselect',
+                message: 'Select Modules',
+                choices: configs.map(c => ({ title: c.pathspec, value: c.identifier, selected: true }))
+            }),
+            stdout: this.context.stdout,
+            dryRun: this.dryRun
+        });
     }
 }
 

@@ -85,9 +85,11 @@ async function *resolveUpdatedConfigs(sourceConfigs: Config[], rawConfig: Recurs
         throw new Error(`No existing config with matching identifier of "${rawConfig.identifier}"`);
 
     const config = Config.fromSchema(rawConfig);
-    await config.register(sourceConfig.path, sourceConfig.sourceUri, sourceConfig.baseHash, sourceConfig.settings, sourceConfig.parentConfig, sourceConfig.parentSubmodule, sourceConfig.pathspec);
+    await config.register(sourceConfig.path, sourceConfig.sourceUri, sourceConfig.baseHash, sourceConfig.settings, {
 
-    if (config.calculateHash() !== config.baseHash)
+    }, sourceConfig.parentConfig, sourceConfig.parentSubmodule, sourceConfig.pathspec);
+
+    if (sourceConfig.isNew || config.calculateHash() !== config.baseHash)
         yield config;
 
     for (const submodule of rawConfig.submodules ?? []) {
@@ -115,7 +117,7 @@ export class EditCommand extends BaseCommand {
             throw new Error('Must specify a config URI');
 
         const settings = await this.loadSettings();
-        const config = await loadV2Config(configPath, settings, { stdout: this.context.stdout, dryRun: this.dryRun });
+        const config = await loadV2Config(configPath, settings, { verify: false, stdout: this.context.stdout, dryRun: this.dryRun });
 
         const tmpDir = await Tmp.dir({
             unsafeCleanup: true
@@ -164,7 +166,7 @@ export class ViewCommand extends BaseCommand {
             throw new Error('Must specify a config URI');
 
         const settings = await this.loadSettings();
-        const config = await loadV2Config(configPath, settings, { stdout: this.context.stdout, dryRun: this.dryRun });
+        const config = await loadV2Config(configPath, settings, { verify: false, stdout: this.context.stdout, dryRun: this.dryRun });
 
         const tmpDir = await Tmp.dir({
             unsafeCleanup: true

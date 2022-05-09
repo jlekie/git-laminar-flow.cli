@@ -11,14 +11,9 @@ import * as Path from 'path';
 
 import * as Prompts from 'prompts';
 
-import { URL } from 'url';
-
-import { parseElementUri } from '@jlekie/git-laminar-flow';
-
 import { BaseCommand, BaseInteractiveCommand } from './common';
 
-import { loadV2Config, Config, Feature, StateProxy, Support } from 'lib/config';
-import { loadState } from 'lib/state';
+import { resolveOrderedConfigs } from 'lib/config';
 import { commit, sync } from 'lib/actions';
 import { executeVscode } from 'lib/exec';
 
@@ -43,7 +38,12 @@ export class InitCommand extends BaseCommand {
             excluded: this.exclude
         });
 
-        await Bluebird.map(targetConfigs, config => config.init({ stdout: this.context.stdout, dryRun: this.dryRun, writeGitmdoulesConfig: this.writeGitmodules }));
+        const configGroups = [];
+        for (const configGroup of resolveOrderedConfigs(targetConfigs))
+            configGroups.push(configGroup);
+
+        for (const configGroup of _.reverse(configGroups))
+            await Bluebird.map(configGroup, config => config.init({ stdout: this.context.stdout, dryRun: this.dryRun, writeGitmdoulesConfig: this.writeGitmodules }));
 
         // for (const config of targetConfigs)
         //     await config.init({ stdout: this.context.stdout, dryRun: this.dryRun });
@@ -350,6 +350,8 @@ export class SyncCommand extends BaseInteractiveCommand {
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');
 
+    push = Option.Boolean('--push', false);
+
     static usage = Command.Usage({
         description: 'Sync local/remote changes'
     });
@@ -369,6 +371,7 @@ export class SyncCommand extends BaseInteractiveCommand {
             }), {
                 defaultValue: targetConfigs.map(c => c.identifier)
             }),
+            push: () => this.push,
             stdout: this.context.stdout,
             dryRun: this.dryRun
         });
@@ -719,7 +722,26 @@ export class ListCommand extends BaseCommand {
             excluded: this.exclude
         });
 
-        for (const config of targetConfigs) {
+        const targets = await Bluebird.map(targetConfigs, async config => {
+            const masterStatus = await config.resolveBranchStatus('master', 'origin', { stdout: this.context.stdout, dryRun: this.dryRun });
+            const developStatus = await config.resolveBranchStatus('develop', 'origin', { stdout: this.context.stdout, dryRun: this.dryRun });
+
+            return {
+                config,
+                master: {
+                    ...masterStatus,
+                    commitsAhead: await masterStatus.resolveCommitsAhead({ stdout: this.context.stdout }),
+                    commitsBehind: await masterStatus.resolveCommitsBehind({ stdout: this.context.stdout })
+                },
+                develop: {
+                    ...developStatus,
+                    commitsAhead: await developStatus.resolveCommitsAhead({ stdout: this.context.stdout }),
+                    commitsBehind: await developStatus.resolveCommitsBehind({ stdout: this.context.stdout })
+                }
+            };
+        });
+
+        for (const { config, master, develop } of targets) {
             const table = new Table({
                 chars: { 'top': '═' , 'top-mid': '╤' , 'top-left': '╔' , 'top-right': '╗'
                         , 'bottom': '═' , 'bottom-mid': '╧' , 'bottom-left': '╚' , 'bottom-right': '╝'
@@ -729,6 +751,8 @@ export class ListCommand extends BaseCommand {
             table.push(
                 { 'Path': config.pathspec },
                 // { 'Identifier': config.identifier }
+                { 'Master': `${master.branchName} [${master.upstreamBranchName}] +${master.commitsAhead} -${master.commitsBehind}` },
+                { 'Develop': `${develop.branchName} [${develop.upstreamBranchName}] +${develop.commitsAhead} -${develop.commitsBehind}` }
             );
 
             if (config.upstreams.length) {

@@ -6,6 +6,7 @@ import * as Zod from 'zod';
 
 import * as OS from 'os';
 import * as Path from 'path';
+import * as FS from 'fs-extra';
 
 import * as Prompts from 'prompts';
 
@@ -61,15 +62,17 @@ export abstract class BaseCommand extends Command {
     }
 
     protected async resolveConfigPath() {
-        const state = await loadState(Path.resolve('.glf', 'state.json'));
+        const sourceUriPath = Path.resolve('.glf', 'source_uri');
+        const sourceUri = await FS.pathExists(sourceUriPath)
+            ? await FS.readFile(sourceUriPath, 'utf8')
+            : undefined;
 
-        return this.configPath ?? getStateValue(state, 'configUri', 'string');
+        return this.configPath ?? sourceUri;
     }
     protected async loadConfig() {
         const settings = await loadSettings(this.settingsPath);
-        const state = await loadState(Path.resolve('.glf', 'state.json'));
 
-        const configPath = this.configPath ?? getStateValue(state, 'configUri', 'string');
+        const configPath = await this.resolveConfigPath();
         if (!configPath)
             throw new Error('Must specify a config URI');
 
