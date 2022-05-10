@@ -11,12 +11,14 @@ export const GlfsRepositorySchema = Zod.object({
 export const SettingsSchema = Zod.object({
     defaultGlfsRepository: Zod.string(),
     glfsRepositories: GlfsRepositorySchema.array().optional(),
+    defaultEditor: Zod.enum([ 'vscode', 'vscode-insiders' ]).optional(),
     vscodeExec: Zod.string().optional()
 });
 
 export class Settings {
     public defaultGlfsRepository: string;
     public glfsRepositories: GlfsRepository[];
+    public defaultEditor?: 'vscode' | 'vscode-insiders';
     public vscodeExec?: string;
 
     public static parse(value: unknown) {
@@ -36,9 +38,10 @@ export class Settings {
         });
     }
 
-    public constructor(params: Pick<Settings, 'defaultGlfsRepository' | 'glfsRepositories'> & Partial<Pick<Settings, 'vscodeExec'>>) {
+    public constructor(params: Pick<Settings, 'defaultGlfsRepository' | 'glfsRepositories'> & Partial<Pick<Settings, 'vscodeExec' | 'defaultEditor'>>) {
         this.defaultGlfsRepository = params.defaultGlfsRepository;
         this.glfsRepositories = params.glfsRepositories;
+        this.defaultEditor = params.defaultEditor;
         this.vscodeExec = params.vscodeExec;
     }
 

@@ -45,6 +45,8 @@ process.stdout.isTTY && cli.register(FeatureCommands.MergeInteractiveCommand);
 
 process.stdout.isTTY && cli.register(FeatureCommands.SyncInteractiveCommand);
 
+process.stdout.isTTY && cli.register(SubmoduleCommands.CreateInteractiveCommand);
+
 cli.register(SupportCommands.ActivateCommand);
 
 cli.register(ConfigCommands.ImportCommand);

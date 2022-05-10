@@ -7,6 +7,8 @@ import * as Path from 'path';
 
 import * as Readline from 'readline';
 
+import { Settings } from './settings';
+
 export interface ExecOptions {
     cwd?: string;
     stdout?: Stream.Writable;
@@ -67,6 +69,40 @@ export async function prompt(query: string, { cwd, stdin, stdout }: InputOptions
         rl.close();
         resolve(ans);
     }));
+}
+
+export async function executeEditor(path: string, { defaultEditor, wait, ...options }: ExecOptions & { defaultEditor?: 'vscode' | 'vscode-insiders', wait?: boolean } = {}) {
+    const editor = (() => {
+        if (defaultEditor) {
+            return defaultEditor;
+        }
+        else {
+            if (process.env['TERM_PROGRAM'] && process.env['TERM_PROGRAM_VERSION'])
+                return process.env['TERM_PROGRAM_VERSION'].endsWith('-insider') ? 'vscode-insiders' : 'vscode';
+            else
+                throw new Error('Default editor not specified and could not determine default from environment');
+        }
+    })();
+
+    if (editor === 'vscode' || editor === 'vscode-insiders') {
+        const editorExec = editor === 'vscode' ? 'code' : 'code-insiders';
+        const inEditor = !!(process.env['TERM_PROGRAM'] && process.env['TERM_PROGRAM_VERSION']);
+
+        const args = [];
+        args.push(editorExec);
+
+        if (inEditor)
+            args.push('--reuse-window');
+        else
+            args.push('--new-window');
+
+        if (wait)
+            args.push('--wait');
+
+        args.push(path);
+
+        await exec(args.join(' '), options);
+    }
 }
 
 export async function executeVscode(args: string | string[], options: ExecOptions & { vscodeExec?: string } = {}) {

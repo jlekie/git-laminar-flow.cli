@@ -16,10 +16,9 @@ import * as Zod from 'zod';
 import { RecursiveConfigSchema } from '@jlekie/git-laminar-flow';
 
 import { BaseCommand } from './common';
-import { exec, execCmd, ExecOptions } from 'lib/exec';
+import { exec, execCmd, executeEditor, ExecOptions } from 'lib/exec';
 
 import { loadConfig, loadV2Config, Config, Release, Hotfix, Support } from 'lib/config';
-import { executeVscode } from 'lib/exec';
 
 export class ImportCommand extends BaseCommand {
     static paths = [['config', 'import']];
@@ -124,9 +123,10 @@ export class EditCommand extends BaseCommand {
         });
         const tmpConfigPath = Path.join(tmpDir.path, '.gitflow.yml');
 
-        await FS.writeFile(tmpConfigPath, Yaml.dump(config.toRecursiveHash(), { lineWidth: 120 }), 'utf8');
+        await FS.writeFile(tmpConfigPath, Yaml.dump(this.recursive ? config.toRecursiveHash() : config.toHash(), { lineWidth: 120 }), 'utf8');
         this.context.stdout.write(Chalk.yellow('Editing the config is an advanced feature. BE CAREFUL!\n'));
-        await executeVscode(['--wait', '-r', tmpConfigPath], { cwd: config.path, stdout: this.context.stdout });
+        // await executeVscode(['--wait', '-r', tmpConfigPath], { cwd: config.path, stdout: this.context.stdout });
+        await executeEditor(tmpConfigPath, { defaultEditor: settings.defaultEditor, wait: true, cwd: config.path, stdout: this.context.stdout });
 
         const rawConfig = await FS.readFile(tmpConfigPath, 'utf8')
             .then(content => Yaml.load(content))
@@ -174,7 +174,7 @@ export class ViewCommand extends BaseCommand {
         const tmpConfigPath = Path.join(tmpDir.path, '.gitflow.yml');
 
         await FS.writeFile(tmpConfigPath, Yaml.dump(this.recursive ? config.toRecursiveHash() : config.toHash(), { lineWidth: 120 }), 'utf8');
-        await executeVscode(['-r', tmpConfigPath], { cwd: config.path, stdout: this.context.stdout });
+        await executeEditor(tmpConfigPath, { defaultEditor: settings.defaultEditor, cwd: config.path, stdout: this.context.stdout });
     }
 }
 

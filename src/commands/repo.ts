@@ -129,9 +129,9 @@ export class CommitCommand extends BaseInteractiveCommand {
             stagedFiles: async ({ config, statuses }) => this.createOverridablePrompt('stagedFiles', Zod.string().array(), (initial) => ({
                 type: 'multiselect',
                 message: `[${Chalk.magenta(config.pathspec)}] Files to Stage`,
-                choices: statuses.map(status => ({ title: status.path, value: status.path, selected: true }))
+                choices: statuses.map(status => ({ title: status.path, value: status.path, selected: initial?.includes(status.path) }))
             }), {
-                defaultValue: statuses.map(s => s.path)
+                defaultValue: statuses.filter(s => s.staged).map(s => s.path)
             }),
             message: ({ config }) => this.createOverridablePrompt('message', Zod.string().nonempty(), (initial) => ({
                 type: 'text',

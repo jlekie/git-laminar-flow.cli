@@ -7,7 +7,7 @@ import * as FS from 'fs-extra';
 
 import * as Chalk from 'chalk';
 
-import { Config, Feature, Release, Hotfix, Support, Element, resolveOrderedConfigs, resolveFilteredOrderedConfigs } from 'lib/config';
+import { Config, Feature, Release, Hotfix, Support, Element, resolveOrderedConfigs, resolveFilteredOrderedConfigs, Submodule } from 'lib/config';
 
 export interface CommonParams {
     stdout?: Stream.Writable;
@@ -681,7 +681,7 @@ export async function sync(rootConfig: Config, { stdout, dryRun, ...params }: Ac
                 await config.checkout(branchStatus.branchName, async () => {
                     if (await branchStatus.resolveCommitsBehind({ stdout }) > 0)
                         await config.exec(`git merge ${branchStatus.upstreamBranchName}`, { stdout, dryRun });
-                    if (await params.push() && await branchStatus.resolveCommitsAhead({ stdout }) > 0)
+                    if (await params.push() && (!branchStatus.upstreamBranchExists || await branchStatus.resolveCommitsAhead({ stdout }) > 0))
                         await config.exec(`git push -u ${branchStatus.upstream} ${branchStatus.branchName}`, { stdout, dryRun });
                 }, { stdout, dryRun });
             }
@@ -693,4 +693,25 @@ export async function sync(rootConfig: Config, { stdout, dryRun, ...params }: Ac
         for (const feature of status.features)
             await processStatus(feature);
     }, { concurrency: 1 });
+}
+
+export async function createSubmodule(config: Config, { stdout, dryRun, ...params }: ActionParams<{
+    name: ActionParam<string>;
+    path: ActionParam<string, { name: string }>;
+    url: ActionParam<string>;
+}>) {
+    const name = await params.name();
+
+    const submodule = new Submodule({
+        name,
+        path: await params.path({ name }),
+        url: await params.url()
+    });
+    config.submodules.push(submodule);
+    await submodule.register(config, { verify: true });
+
+    await submodule.config.init({ stdout, dryRun });
+    await submodule.init({ stdout, dryRun });
+
+    await config.save({ stdout: stdout, dryRun: dryRun });
 }

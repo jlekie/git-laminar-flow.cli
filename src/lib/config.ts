@@ -1429,7 +1429,8 @@ export class Config {
     public async resolveBranchStatus(branchName: string, upstream: string, { stdout, dryRun }: ExecParams = {}) {
         const upstreamBranchName = `${upstream}/${branchName}`;
         const localExists = await this.branchExists(branchName, { stdout, dryRun });
-        const upstreamExists = await this.remoteBranchExists(branchName, upstream, { stdout, dryRun });
+        const upstreamExists = await this.upstreamExists(upstream, { stdout, dryRun });
+        const upstreamBranchExists = await this.remoteBranchExists(branchName, upstream, { stdout, dryRun });
         const localSha = await this.resolveCommitSha(branchName, { stdout, dryRun }).catch(() => undefined);
         const upstreamSha = await this.resolveCommitSha(upstreamBranchName, { stdout, dryRun }).catch(() => undefined);
 
@@ -1439,6 +1440,7 @@ export class Config {
             upstreamBranchName,
             localExists,
             upstreamExists,
+            upstreamBranchExists,
             resolveCommitsBehind: ({ stdout }: ExecParams = {}) => this.execCmd(`git rev-list --count ${branchName}..${upstreamBranchName}`, { stdout })
                 .then(value => parseInt(value))
                 .catch(() => -1),
