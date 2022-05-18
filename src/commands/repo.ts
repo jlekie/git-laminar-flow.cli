@@ -42,7 +42,7 @@ export class InitCommand extends BaseCommand {
         for (const configGroup of resolveOrderedConfigs(targetConfigs))
             configGroups.push(configGroup);
 
-        for (const configGroup of _.reverse(configGroups))
+        for (const configGroup of configGroups)
             await Bluebird.map(configGroup, config => config.init({ stdout: this.context.stdout, dryRun: this.dryRun, writeGitmdoulesConfig: this.writeGitmodules }));
 
         // for (const config of targetConfigs)

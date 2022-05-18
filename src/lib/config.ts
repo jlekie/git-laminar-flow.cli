@@ -980,12 +980,12 @@ export class Config {
                         await exec(`git fetch`, { cwd: this.path, stdout, dryRun });
 
                         if (!await this.remoteBranchExists('master', originUpstream.name, { stdout, dryRun })) {
-                            await exec(`git commit --allow-empty -m "initial commit"`, { cwd: this.path, stdout, dryRun });
+                            await exec(`git commit --allow-empty -m "initial commit (GLFCID: ${this.identifier})"`, { cwd: this.path, stdout, dryRun });
                         }
                     }
                     else {
                         await exec(`git init`, { cwd: this.path, stdout, dryRun });
-                        await exec(`git commit --allow-empty -m "initial commit"`, { cwd: this.path, stdout, dryRun });
+                        await exec(`git commit --allow-empty -m "initial commit (GLFCID: ${this.identifier})"`, { cwd: this.path, stdout, dryRun });
                     }
                 }
             }
@@ -995,13 +995,13 @@ export class Config {
                     await exec(`git clone ${originUpstream.url} ${this.path}`, { stdout, dryRun });
 
                     if (!await this.branchExists('master', { stdout, dryRun })) {
-                        await exec(`git commit --allow-empty -m "initial commit"`, { cwd: this.path, stdout, dryRun });
+                        await exec(`git commit --allow-empty -m "initial commit (GLFCID: ${this.identifier})"`, { cwd: this.path, stdout, dryRun });
                     }
                 }
                 else {
                     await FS.ensureDir(this.path);
                     await exec(`git init`, { cwd: this.path, stdout, dryRun });
-                    await exec(`git commit --allow-empty -m "initial commit"`, { cwd: this.path, stdout, dryRun });
+                    await exec(`git commit --allow-empty -m "initial commit (GLFCID: ${this.identifier})"`, { cwd: this.path, stdout, dryRun });
                 }
             }
 
@@ -1579,8 +1579,10 @@ export class Submodule {
     public async init({ stdout, dryRun }: ExecParams = {}) {
         // await this.config.init({ stdout, dryRun });
 
-        if (await this.parentConfig.execCmd(`git submodule status ${this.path}`, { stdout, dryRun }).then(r => false).catch(() => true) && this.config.upstreams.length > 0)
-            await this.parentConfig.exec(`git submodule add -f --name ${this.name} ${this.config.upstreams[0].url} ${this.path}`, { stdout, dryRun });
+        // const relativePath = Path.relative(this.parentConfig.path, this.config.path);
+
+        if (await this.parentConfig.execCmd(`git submodule status ${this.path}`, { stdout, dryRun }).then(r => false).catch(() => true))
+            await this.parentConfig.exec(`git submodule add -f --name ${this.name} ${this.config.upstreams.length > 0 ? this.config.upstreams[0].url : this.path} ${this.path}`, { stdout, dryRun });
     }
 
     public async fetch({ stdout, dryRun }: ExecParams = {}) {
