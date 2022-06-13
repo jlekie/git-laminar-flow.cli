@@ -47,15 +47,15 @@ export class AddRepoCommand extends BaseInteractiveCommand {
     public async executeCommand() {
         const settings = await this.loadSettings();
 
-        const name = await this.createOverridablePrompt('repoName', Zod.string().nonempty(), {
+        const name = await this.createOverridablePrompt('repoName', value => Zod.string().nonempty().parse(value), {
             type: 'text',
             message: 'Repository Name'
         });
-        const url = await this.createOverridablePrompt('url', Zod.string().url(), {
+        const url = await this.createOverridablePrompt('url', value => Zod.string().url().parse(value), {
             type: 'text',
             message: 'Repository URL'
         });
-        const apiKey = await this.createOverridablePrompt('apiKey', Zod.string().optional(), {
+        const apiKey = await this.createOverridablePrompt('apiKey', value => Zod.string().optional().parse(value), {
             type: 'password',
             message: 'API Key'
         });

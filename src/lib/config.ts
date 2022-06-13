@@ -15,17 +15,21 @@ import { v4 as Uuid } from 'uuid';
 
 import * as Zod from 'zod';
 
+import * as Semver from 'semver';
+
 import { Transform, TransformOptions } from 'stream';
 import { StringDecoder } from 'string_decoder';
 
 import {
-    ConfigSchema, ConfigSubmoduleSchema, ConfigFeatureSchema, ConfigReleaseSchema, ConfigHotfixSchema, ConfigSupportSchema, ConfigUriSchema, ElementSchema, RecursiveConfigSchema, RecursiveConfigSubmoduleSchema,
-    ConfigBase, SubmoduleBase, FeatureBase, ReleaseBase, HotfixBase, SupportBase,
+    ConfigSchema, ConfigSubmoduleSchema, ConfigFeatureSchema, ConfigReleaseSchema, ConfigHotfixSchema, ConfigSupportSchema, ConfigUriSchema, ElementSchema, RecursiveConfigSchema, RecursiveConfigSubmoduleSchema, ConfigIntegrationSchema, ConfigTaggingSchema, ConfigMessageTemplate, ConfigTagTemplate,
+    ConfigBase, SubmoduleBase, FeatureBase, ReleaseBase, HotfixBase, SupportBase, IntegrationBase, TaggingBase, MessageTemplateBase, TagTemplateBase,
     parseConfigReference
 } from '@jlekie/git-laminar-flow';
 
 import { exec, execCmd, ExecOptions } from './exec';
 import { Settings } from './settings';
+import { loadPlugin } from './plugin';
+import { parseStatus } from './porcelain';
 
 function applyMixins(derivedCtor: any, constructors: any[]) {
     constructors.forEach((baseCtor) => {
@@ -82,26 +86,80 @@ class TestTransform extends Transform {
     }
 }
 
-export function *resolveOrderedConfigs(configs: Config[], parent?: Config): Generator<Config[]> {
-    const filteredConfigs = configs.filter(c => c.parentConfig === parent);
-    for (const config of filteredConfigs)
-        for (const childFilteredConfigs of resolveOrderedConfigs(configs, config))
-            yield childFilteredConfigs;
+// export function *resolveOrderedConfigs(configs: Config[], parent?: Config): Generator<Config[]> {
+//     const filteredConfigs = configs.filter(c => c.parentConfig === parent);
+//     for (const config of filteredConfigs)
+//         for (const childFilteredConfigs of resolveOrderedConfigs(configs, config))
+//             yield childFilteredConfigs;
 
-    if (filteredConfigs.length > 0)
-        yield filteredConfigs;
+//     if (filteredConfigs.length > 0)
+//         yield filteredConfigs;
+// }
+// export type ResolveFilteredOrderedConfigsMapper<T> = T extends (...args: any[]) => infer R ? R : undefined;
+// export function resolveFilteredOrderedConfigs(configs: Config[], { parent, filter }: Partial<{ parent: Config, filter: (config: Config) => boolean | Promise<boolean> }>): AsyncGenerator<Config[]>;
+// export function resolveFilteredOrderedConfigs<T>(configs: Config[], { parent, filter }: Partial<{ parent: Config, filter: (config: Config) => boolean | Promise<boolean> }> & { mapper: (config: Config) => T }): AsyncGenerator<T[]>;
+// export async function *resolveFilteredOrderedConfigs<T, RT extends NonNullable<T>>(configs: Config[], { parent, filter, mapper }: Partial<{ parent: Config, filter: (config: Config) => boolean | Promise<boolean>, mapper: (config: Config) => T | undefined }> = {}): AsyncGenerator<Config[] | RT[]> {
+//     const applicableConfigs = configs.filter(c => c.parentConfig === parent);
+//     // console.log(applicableConfigs, parent)
+
+//     for (const config of applicableConfigs)
+//         for await (const childFilteredConfigs of resolveFilteredOrderedConfigs(configs, { parent: config, filter }))
+//             mapper ? yield _.compact(childFilteredConfigs.map(c => mapper(c))) : yield childFilteredConfigs;
+
+//     const filteredConfigs = filter ? await Bluebird.filter(applicableConfigs, filter) : [];
+//     if (filteredConfigs.length > 0)
+//         mapper ? yield _.compact(filteredConfigs.map(c => mapper(c))) : yield filteredConfigs;
+// }
+
+export interface IterateTopologicallyNonMappedParams<T> {
+    parent?: T;
+
+    filter?: (item: T) => boolean | Promise<boolean>;
 }
-export async function *resolveFilteredOrderedConfigs(configs: Config[], { parent, filter }: Partial<{ parent: Config, filter: (config: Config) => boolean | Promise<boolean> }> = {}): AsyncGenerator<Config[]> {
-    const applicableConfigs = configs.filter(c => c.parentConfig === parent);
-    // console.log(applicableConfigs, parent)
+export async function *iterateTopologicallyNonMapped<T>(items: T[], resolveChildren: (item: T, parent?: T) => boolean | Promise<boolean>, { parent, filter }: IterateTopologicallyNonMappedParams<T> = {}): AsyncGenerator<T[]> {
+    const children = await Bluebird.filter(items, item => resolveChildren(item, parent));
 
-    for (const config of applicableConfigs)
-        for await (const childFilteredConfigs of resolveFilteredOrderedConfigs(configs, { parent: config, filter }))
-            yield childFilteredConfigs;
+    for (const child of children)
+        for await (const grandChildren of iterateTopologicallyNonMapped<T>(items, resolveChildren, { parent: child, filter }))
+            yield grandChildren;
 
-    const filteredConfigs = filter ? await Bluebird.filter(applicableConfigs, filter) : [];
-    if (filteredConfigs.length > 0)
-        yield filteredConfigs;
+    const filteredChildren = filter ? await Bluebird.filter(children, c => filter(c)) : children;
+    if (filteredChildren.length > 0) {
+        yield filteredChildren;
+    }
+}
+
+export interface IterateTopologicallyMappedParams<T, RT> {
+    parent?: T;
+
+    filter?: (item: T) => boolean | Promise<boolean>;
+
+    mapper: (item: T) => RT | Promise<RT>
+}
+export async function *iterateTopologicallyMapped<T, RT>(items: T[], resolveChildren: (item: T, parent?: T) => boolean | Promise<boolean>, { parent, filter, mapper }: IterateTopologicallyMappedParams<T, RT>): AsyncGenerator<NonNullable<RT>[]> {
+    const children = await Bluebird.filter(items, item => resolveChildren(item, parent));
+
+    for (const child of children)
+        for await (const grandChildren of iterateTopologicallyMapped<T, RT>(items, resolveChildren, { parent: child, filter, mapper }))
+            yield grandChildren;
+
+    const filteredChildren = filter ? await Bluebird.filter(children, c => filter(c)) : children;
+    if (filteredChildren.length > 0) {
+        yield _.compact(await Bluebird.map(filteredChildren, c => mapper(c))) as NonNullable<RT>[];
+    }
+}
+
+export function iterateTopologically<T>(items: T[], resolveChildren: (item: T, parent?: T) => boolean | Promise<boolean>, params: IterateTopologicallyNonMappedParams<T>): AsyncGenerator<T[]>;
+export function iterateTopologically<T, RT>(items: T[], resolveChildren: (item: T, parent?: T) => boolean | Promise<boolean>, params: IterateTopologicallyMappedParams<T, RT>): AsyncGenerator<NonNullable<RT>[]>;
+export async function *iterateTopologically<T, RT>(items: T[], resolveChildren: (item: T, parent?: T) => boolean | Promise<boolean>, params: IterateTopologicallyNonMappedParams<T> | IterateTopologicallyMappedParams<T, RT>): AsyncGenerator<T[] | NonNullable<RT>[]> {
+    if ('mapper' in params) {
+        for await (const children of iterateTopologicallyMapped(items, resolveChildren, params))
+            yield children;
+    }
+    else {
+        for await (const children of iterateTopologicallyNonMapped(items, resolveChildren, params))
+            yield children;
+    }
 }
 
 export interface State {
@@ -464,10 +522,11 @@ export interface BranchStatus {
     commitsBehind: number;
 }
 
-export type ConfigParams = Pick<Config, 'identifier' | 'upstreams' | 'submodules' | 'features' | 'releases' | 'hotfixes' | 'supports' | 'included' | 'excluded'> & Partial<Pick<Config, 'featureMessageTemplate' | 'releaseMessageTemplate' | 'hotfixMessageTemplate' | 'releaseTagTemplate' | 'hotfixTagTemplate' | 'isNew' | 'managed' | 'tags'>>;
+export type ConfigParams = Pick<Config, 'identifier' | 'upstreams' | 'submodules' | 'features' | 'releases' | 'hotfixes' | 'supports' | 'included' | 'excluded'> & Partial<Pick<Config, 'featureMessageTemplate' | 'releaseMessageTemplate' | 'hotfixMessageTemplate' | 'releaseTagTemplate' | 'hotfixTagTemplate' | 'isNew' | 'managed' | 'version' | 'tags' | 'integrations' | 'commitMessageTemplates' | 'tagTemplates'>>;
 export class Config {
     public identifier: string;
     public managed: boolean;
+    public version?: string;
     public upstreams: Array<{ name: string, url: string }>;
     public submodules: Submodule[];
     public features: Feature[];
@@ -482,6 +541,9 @@ export class Config {
     public releaseTagTemplate?: string;
     public hotfixTagTemplate?: string;
     public tags: string[];
+    public integrations: Integration[];
+    public commitMessageTemplates: MessageTemplate[];
+    public tagTemplates: TagTemplate[];
 
     public readonly isNew: boolean;
 
@@ -562,7 +624,10 @@ export class Config {
             supports: value.supports?.map(i => Support.fromSchema(i)) ?? [],
             included: value.included?.slice() ?? [],
             excluded: value.excluded?.slice() ?? [],
-            tags: value.tags?.slice() ?? []
+            tags: value.tags?.slice() ?? [],
+            integrations: value.integrations?.map(i => Integration.fromSchema(i)),
+            commitMessageTemplates: value.commitMessageTemplates?.map(i => MessageTemplate.fromSchema(i)),
+            tagTemplates: value.tagTemplates?.map(i => TagTemplate.fromSchema(i))
         });
 
         return config;
@@ -603,8 +668,14 @@ export class Config {
 
         this.isNew = params.isNew ?? false;
         this.managed = params.managed ?? true;
+        this.version = params.version;
 
         this.tags = params.tags ?? [];
+
+        this.integrations = params.integrations ?? [];
+
+        this.commitMessageTemplates = params.commitMessageTemplates ?? [];
+        this.tagTemplates = params.tagTemplates ?? [];
     }
 
     // Register internals (initialize)
@@ -631,6 +702,7 @@ export class Config {
         await Bluebird.map(this.releases, i => i.register(this));
         await Bluebird.map(this.hotfixes, i => i.register(this));
         await Bluebird.map(this.supports, i => i.register(this));
+        await Bluebird.map(this.integrations, i => i.register(this));
     }
 
     public flattenConfigs(): Config[] {
@@ -1298,10 +1370,13 @@ export class Config {
         await exec(`git fetch --all`, { cwd: this.path, stdout, dryRun });
     }
     public async stage(files: string[], { stdout, dryRun }: ExecParams = {}) {
+        if (!files.length)
+            return;
+
         await exec(`git add ${files.join(' ')}`, { cwd: this.path, stdout, dryRun });
     }
-    public async commit(message: string, { amend, stdout, dryRun }: ExecParams & CommitParams = {}) {
-        await exec(`git commit -m "${message}"${amend ? ' --amend' : ''}`, { cwd: this.path, stdout, dryRun });
+    public async commit(message: string, { amend, allowEmpty, stdout, dryRun }: ExecParams & CommitParams = {}) {
+        await exec(`git commit -m "${message}"${amend ? ' --amend' : ''}${allowEmpty ? ' --allow-empty' : ''}`, { cwd: this.path, stdout, dryRun });
     }
     public async push(upstreamName: string, branchName: string, { setUpstream, stdout, dryRun }: ExecParams & PushParams = {}) {
         await exec(`git push${setUpstream ? ' -u' : ''} ${upstreamName} ${branchName}`, { cwd: this.path, stdout, dryRun });
@@ -1326,6 +1401,14 @@ export class Config {
         // stdout = stdout && TestTransform.create(stdout, Chalk.gray('[checkoutBranch]'));
 
         await exec(`git checkout ${orphan ? '--orphan ' : ''}${branchName}`, { cwd: this.path, stdout, dryRun });
+    }
+    public async checkoutBranchTree(branchName: string | ((config: Config) => string), { orphan, stdout, dryRun }: ExecParams & CheckoutBranchParams = {}) {
+        const resolvedBranchName = _.isFunction(branchName) ? branchName(this) : branchName;
+
+        for (const submodule of this.submodules)
+            await submodule.config.checkoutBranchTree(branchName, { orphan, stdout, dryRun });
+
+        await exec(`git checkout ${orphan ? '--orphan ' : ''}${resolvedBranchName}`, { cwd: this.path, stdout, dryRun });
     }
     public async createBranch(branchName: string, { source, stdout, dryRun }: ExecParams & CreateBranchParams = {}) {
         if (source)
@@ -1386,41 +1469,52 @@ export class Config {
     }
 
     public async resolveStatuses({ stdout, dryRun }: ExecParams = {}) {
-        const rawStatus = await this.execCmd('git status -uall --porcelain=v1', { stdout, dryRun, trim: false });
+        const rawStatus = await this.execCmd('git status -uall --porcelain=v2', { stdout, dryRun, trim: false });
 
         return _.compact(rawStatus.split('\n').map(line => {
             if (!line)
                 return;
 
-            const typeCode = line.substring(0, 2);
-            const path = line.substring(3);
-
-            if (typeCode === '??')
-                return { type: 'untracked', path } as const;
-            else if (typeCode === ' M')
-                return { type: 'modified', staged: false, path } as const;
-            else if (typeCode === 'M ')
-                return { type: 'modified', staged: true, path } as const;
-            else if (typeCode === ' A')
-                return { type: 'added', staged: false, path } as const;
-            else if (typeCode === 'A ')
-                return { type: 'added', staged: true, path } as const;
-            else if (typeCode === ' D')
-                return { type: 'deleted', staged: false, path } as const;
-            else if (typeCode === 'D ')
-                return { type: 'deleted', staged: true, path } as const;
-            else if (typeCode === ' R')
-                return { type: 'renamed', staged: false, path } as const;
-            else if (typeCode === 'R ')
-                return { type: 'renamed', staged: true, path } as const;
-            else if (typeCode === ' C')
-                return { type: 'copied', staged: false, path } as const;
-            else if (typeCode === 'C ')
-                return { type: 'copied', staged: true, path } as const;
-            else
-                return { type: 'unknown', path } as const;
+            return parseStatus(line);
         }));
     }
+
+    // public async resolveStatuses({ stdout, dryRun }: ExecParams = {}) {
+    //     const rawStatus = await this.execCmd('git status -uall --porcelain=v1', { stdout, dryRun, trim: false });
+
+    //     return _.compact(rawStatus.split('\n').map(line => {
+    //         if (!line)
+    //             return;
+
+    //         const typeCode = line.substring(0, 2);
+    //         const path = line.substring(3);
+
+    //         if (typeCode === '??')
+    //             return { type: 'untracked', path } as const;
+    //         else if (typeCode === ' M')
+    //             return { type: 'modified', staged: false, path } as const;
+    //         else if (typeCode === 'M ')
+    //             return { type: 'modified', staged: true, path } as const;
+    //         else if (typeCode === ' A')
+    //             return { type: 'added', staged: false, path } as const;
+    //         else if (typeCode === 'A ')
+    //             return { type: 'added', staged: true, path } as const;
+    //         else if (typeCode === ' D')
+    //             return { type: 'deleted', staged: false, path } as const;
+    //         else if (typeCode === 'D ')
+    //             return { type: 'deleted', staged: true, path } as const;
+    //         else if (typeCode === ' R')
+    //             return { type: 'renamed', staged: false, path } as const;
+    //         else if (typeCode === 'R ')
+    //             return { type: 'renamed', staged: true, path } as const;
+    //         else if (typeCode === ' C')
+    //             return { type: 'copied', staged: false, path } as const;
+    //         else if (typeCode === 'C ')
+    //             return { type: 'copied', staged: true, path } as const;
+    //         else
+    //             return { type: 'unknown', path } as const;
+    //     }));
+    // }
 
     public async resolveBranchUpstream(branchName: string, { stdout, dryRun }: ExecParams = {}) {
         return execCmd(`git branch --list ${branchName} --format="%(upstream)"`, { cwd: this.path, stdout, dryRun });
@@ -1517,6 +1611,77 @@ export class Config {
             if (!currentBranchActive)
                 await this.checkoutBranch(currentBranch, { stdout, dryRun });
         }
+    }
+
+    public async swapCheckoutTree<T>(branchName: string | ((config: Config) => string), handler: () => T | Promise<T>, { stdout, dryRun }: ExecParams = {}) {
+        const cleanups = await this._swapCheckoutTree(branchName, { stdout, dryRun });
+
+        try {
+            const result = await handler();
+
+            return result;
+        }
+        finally {
+            await Bluebird.map(cleanups, cleanup => cleanup());
+        }
+    }
+    private async _swapCheckoutTree(branchName: string | ((config: Config) => string), { stdout, dryRun }: ExecParams = {}) {
+        const cleanups: Array<() => void | Promise<void>> = [];
+
+        for (const submodule of this.submodules)
+            cleanups.push(...await submodule.config._swapCheckoutTree(branchName, { stdout, dryRun }));
+
+        const resolvedBranchName = _.isFunction(branchName) ? branchName(this) : branchName;
+
+        const currentBranch = await this.resolveCurrentBranch({ stdout, dryRun });
+        const currentBranchActive = currentBranch === resolvedBranchName;
+
+        if (!currentBranchActive)
+            await this.checkoutBranch(resolvedBranchName, { stdout, dryRun });
+
+        cleanups.push(async () => {
+            if (!currentBranchActive)
+                await this.checkoutBranch(currentBranch, { stdout, dryRun });
+        });
+
+        return cleanups;
+    }
+
+    public async setVersion(version: string | null, { stdout, dryRun }: ExecParams = {}) {
+        const oldVersion = this.version ? Semver.clean(this.version) : null;
+
+        if (version) {
+            this.version = `v${version}`;
+
+            for (const integration of this.integrations) {
+                const plugin = await integration.loadPlugin();
+                await plugin.updateVersion(oldVersion, version, {
+                    config: this,
+                    stdout,
+                    dryRun
+                });
+            }
+        }
+        else {
+            delete this.version;
+        }
+    }
+
+    public flattenCommitMessageTemplates() {
+        const messageTemplates = [ ...this.commitMessageTemplates ];
+
+        if (this.parentConfig)
+            messageTemplates.push(...this.parentConfig.flattenCommitMessageTemplates().filter(t => !messageTemplates.some(tt => t.name === tt.name)));
+
+        return messageTemplates;
+    }
+    public flattenTagTemplates() {
+        const tagTemplates = [ ...this.tagTemplates ];
+
+        if (this.parentConfig)
+            tagTemplates.push(...this.parentConfig.flattenTagTemplates().filter(t => !tagTemplates.some(tt => t.name === tt.name)));
+
+        return tagTemplates;
     }
 }
 
@@ -1617,16 +1782,16 @@ export class Submodule {
         }
     }
 }
-
 export interface Submodule extends SubmoduleBase {}
 applyMixins(Submodule, [ SubmoduleBase ]);
 
-export type FeatureParams = Pick<Feature, 'name' | 'branchName' | 'sourceSha' | 'upstream'>;
+export type FeatureParams = Pick<Feature, 'name' | 'branchName' | 'sourceSha' | 'upstream'> & Partial<Pick<Feature, 'tags'>>;
 export class Feature {
     public name: string;
     public branchName: string;
     public sourceSha: string;
     public upstream?: string;
+    public tags: Tagging[];
 
     #initialized: boolean = false;
 
@@ -1658,7 +1823,8 @@ export class Feature {
     }
     public static fromSchema(value: Zod.infer<typeof ConfigFeatureSchema>) {
         return new this({
-            ...value
+            ...value,
+            tags: value.tags?.map(t => Tagging.fromSchema(t))
         });
     }
 
@@ -1667,6 +1833,7 @@ export class Feature {
         this.branchName = params.branchName;
         this.sourceSha = params.sourceSha;
         this.upstream = params.upstream;
+        this.tags = params.tags ?? [];
     }
 
     public async register(parentConfig: Config, parentSupport?: Support) {
@@ -1708,17 +1875,17 @@ export class Feature {
         return this.parentConfig.swapCheckout(this.branchName, handler, { stdout, dryRun });
     }
 }
-
 export interface Feature extends FeatureBase {}
 applyMixins(Feature, [ FeatureBase ]);
 
-export type ReleaseParams = Pick<Release, 'name' | 'branchName' | 'sourceSha' | 'upstream'> & Partial<Pick<Release, 'intermediate'>>;
+export type ReleaseParams = Pick<Release, 'name' | 'branchName' | 'sourceSha' | 'upstream'> & Partial<Pick<Release, 'intermediate' | 'tags'>>;
 export class Release {
     public name: string;
     public branchName: string;
     public sourceSha: string;
     public upstream?: string;
     public intermediate: boolean;
+    public tags: Tagging[];
 
     #initialized: boolean = false;
 
@@ -1750,7 +1917,8 @@ export class Release {
     }
     public static fromSchema(value: Zod.infer<typeof ConfigReleaseSchema>) {
         return new this({
-            ...value
+            ...value,
+            tags: value.tags?.map(t => Tagging.fromSchema(t))
         });
     }
 
@@ -1760,6 +1928,7 @@ export class Release {
         this.sourceSha = params.sourceSha;
         this.upstream = params.upstream;
         this.intermediate = params.intermediate ?? false;
+        this.tags = params.tags ??[];
     }
 
     public async register(parentConfig: Config, parentSupport?: Support) {
@@ -1803,17 +1972,17 @@ export class Release {
         return _.template(this.parentConfig.releaseTagTemplate ?? '<%= releaseName %>');
     }
 }
-
 export interface Release extends ReleaseBase {}
 applyMixins(Release, [ ReleaseBase ]);
 
-export type HotfixParams = Pick<Hotfix, 'name' | 'branchName' | 'sourceSha' | 'upstream'> & Partial<Pick<Hotfix, 'intermediate'>>;
+export type HotfixParams = Pick<Hotfix, 'name' | 'branchName' | 'sourceSha' | 'upstream'> & Partial<Pick<Hotfix, 'intermediate' | 'tags'>>;
 export class Hotfix {
     public name: string;
     public branchName: string;
     public sourceSha: string;
     public upstream?: string;
     public intermediate: boolean;
+    public tags: Tagging[];
 
     #initialized: boolean = false;
 
@@ -1845,7 +2014,8 @@ export class Hotfix {
     }
     public static fromSchema(value: Zod.infer<typeof ConfigHotfixSchema>) {
         return new this({
-            ...value
+            ...value,
+            tags: value.tags?.map(t => Tagging.fromSchema(t))
         });
     }
 
@@ -1855,6 +2025,7 @@ export class Hotfix {
         this.sourceSha = params.sourceSha;
         this.upstream = params.upstream;
         this.intermediate = params.intermediate ?? false;
+        this.tags = params.tags ??[];
     }
 
     public async register(parentConfig: Config, parentSupport?: Support) {
@@ -1898,7 +2069,6 @@ export class Hotfix {
         return _.template(this.parentConfig.hotfixTagTemplate ?? '<%= hotfixName %>');
     }
 }
-
 export interface Hotfix extends HotfixBase {}
 applyMixins(Hotfix, [ HotfixBase ]);
 
@@ -2022,9 +2192,168 @@ export class Support {
         this.hotfixes.splice(idx, 1);
     }
 }
-
 export interface Support extends SupportBase {}
 applyMixins(Support, [ SupportBase ]);
+
+export type IntegrationParams = Pick<Integration, 'plugin' | 'options'>;
+export class Integration {
+    public plugin: string;
+    public options: Record<string, unknown>;
+
+    #initialized: boolean = false;
+
+    #parentConfig!: Config;
+    public get parentConfig() {
+        if (!this.#initialized)
+            throw new Error('Not initialized');
+
+        return this.#parentConfig;
+    }
+
+    // #pluginModule!: Plugin;
+    // public get pluginModule() {
+    //     if (!this.#initialized)
+    //         throw new Error('Not initialized');
+
+    //     return this.#pluginModule;
+    // }
+
+    public static parse(value: unknown) {
+        return this.fromSchema(ConfigIntegrationSchema.parse(value));
+    }
+    public static fromSchema(value: Zod.infer<typeof ConfigIntegrationSchema>) {
+        return new this({
+            ...value,
+            options: value.options ? { ...value.options } : {}
+        });
+    }
+
+    public constructor(params: IntegrationParams) {
+        this.plugin = params.plugin;
+        this.options = params.options;
+    }
+
+    public async register(parentConfig: Config) {
+        this.#initialized = true;
+
+        this.#parentConfig = parentConfig;
+
+        // this.#pluginModule = await loadPlugin(this.plugin, this.options);
+    }
+
+    public async loadPlugin() {
+        return loadPlugin(this.plugin, this.options);
+    }
+}
+export interface Integration extends IntegrationBase {}
+applyMixins(Integration, [ IntegrationBase ]);
+
+export type TaggingParams = Pick<Tagging, 'name' | 'annotation'>;
+export class Tagging {
+    public name: string;
+    public annotation?: string;
+
+    public static parse(value: unknown) {
+        return this.fromSchema(ConfigTaggingSchema.parse(value));
+    }
+    public static fromSchema(value: Zod.infer<typeof ConfigTaggingSchema>) {
+        return new this({
+            ...value
+        });
+    }
+
+    public constructor(params: TaggingParams) {
+        this.name = params.name;
+        this.annotation = params.annotation;
+    }
+}
+export interface Tagging extends TaggingBase {}
+applyMixins(Tagging, [ TaggingBase ]);
+
+export type MessageTemplateParams = Pick<MessageTemplate, 'name' | 'message'>;
+export class MessageTemplate {
+    public name: string;
+
+    #message!: string;
+    public get message() {
+        return this.#message;
+    }
+    public set message(value) {
+        this.#message = value;
+        this.#messageTemplate = _.template(value);
+    }
+
+    #messageTemplate!: _.TemplateExecutor;
+    public get messageTemplate() {
+        return this.#messageTemplate;
+    }
+
+    public static parse(value: unknown) {
+        return this.fromSchema(ConfigMessageTemplate.parse(value));
+    }
+    public static fromSchema(value: Zod.infer<typeof ConfigMessageTemplate>) {
+        return new this({
+            ...value
+        });
+    }
+
+    public constructor(params: MessageTemplateParams) {
+        this.name = params.name;
+        this.message = params.message;
+    }
+}
+export interface MessageTemplate extends MessageTemplateBase {}
+applyMixins(MessageTemplate, [ MessageTemplateBase ]);
+
+export type TagTemplateParams = Pick<TagTemplate, 'name' | 'tag'> & Partial<Pick<TagTemplate, 'annotation'>>;
+export class TagTemplate {
+    public name: string;
+
+    #tag!: string;
+    public get tag() {
+        return this.#tag;
+    }
+    public set tag(value) {
+        this.#tag = value;
+        this.#tagTemplate = _.template(value);
+    }
+
+    #annotation?: string;
+    public get annotation() {
+        return this.#annotation;
+    }
+    public set annotation(value) {
+        this.#annotation = value;
+        this.#annotationTemplate = _.template(value);
+    }
+
+    #tagTemplate!: _.TemplateExecutor;
+    public get tagTemplate() {
+        return this.#tagTemplate;
+    }
+
+    #annotationTemplate?: _.TemplateExecutor;
+    public get annotationTemplate() {
+        return this.#annotationTemplate;
+    }
+
+    public static parse(value: unknown) {
+        return this.fromSchema(ConfigTagTemplate.parse(value));
+    }
+    public static fromSchema(value: Zod.infer<typeof ConfigTagTemplate>) {
+        return new this({
+            ...value
+        });
+    }
+
+    public constructor(params: TagTemplateParams) {
+        this.name = params.name;
+        this.tag = params.tag;
+        this.annotation = params.annotation;
+    }
+}
+export interface TagTemplate extends TagTemplateBase {}
+applyMixins(TagTemplate, [ TagTemplateBase ]);
 
 export type ExecParams = Omit<ExecOptions, 'cwd'> & { basePath?: string };
 export interface MergeParams {
@@ -2046,6 +2375,7 @@ export interface TagParams {
 }
 export interface CommitParams {
     amend?: boolean;
+    allowEmpty?: boolean;
 }
 export interface PushParams {
     setUpstream?: boolean;

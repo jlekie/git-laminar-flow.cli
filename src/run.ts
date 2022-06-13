@@ -25,6 +25,10 @@ cli.register(RepoCommands.CommitCommand);
 cli.register(RepoCommands.CreateWorkspaceCommand);
 cli.register(RepoCommands.OpenWorkspaceCommand);
 cli.register(RepoCommands.GenerateSolutionCommand);
+process.stdout.isTTY && cli.register(RepoCommands.ViewVersionCommand);
+process.stdout.isTTY && cli.register(RepoCommands.SetVersionCommand);
+process.stdout.isTTY && cli.register(RepoCommands.IncrementVersionCommand);
+process.stdout.isTTY && cli.register(RepoCommands.StampVersionCommand);
 
 // cli.register(SubmoduleCommands.CloneCommand);
 

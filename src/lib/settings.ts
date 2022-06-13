@@ -3,6 +3,8 @@ import * as Yaml from 'js-yaml';
 
 import * as Zod from 'zod';
 
+import { ConfigMessageTemplate, ConfigTagTemplate } from '@jlekie/git-laminar-flow';
+
 export const GlfsRepositorySchema = Zod.object({
     name: Zod.string(),
     url: Zod.string().url(),
@@ -12,7 +14,10 @@ export const SettingsSchema = Zod.object({
     defaultGlfsRepository: Zod.string(),
     glfsRepositories: GlfsRepositorySchema.array().optional(),
     defaultEditor: Zod.enum([ 'vscode', 'vscode-insiders' ]).optional(),
-    vscodeExec: Zod.string().optional()
+    vscodeExec: Zod.string().optional(),
+
+    commitMessageTemplates: ConfigMessageTemplate.array().optional(),
+    tagTemplates: ConfigTagTemplate.array().optional()
 });
 
 export class Settings {

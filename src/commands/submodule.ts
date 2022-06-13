@@ -18,16 +18,16 @@ export class CreateInteractiveCommand extends BaseInteractiveCommand {
         const rootConfig = await this.loadConfig();
 
         await createSubmodule(rootConfig, {
-            name: () => this.createOverridablePrompt('name', Zod.string().nonempty(), {
+            name: () => this.createOverridablePrompt('name', value => Zod.string().nonempty().parse(value), {
                 type: 'text',
                 message: 'Submodule Name'
             }),
-            path: ({ name }) => this.createOverridablePrompt('path', Zod.string().nonempty(), {
+            path: ({ name }) => this.createOverridablePrompt('path', value => Zod.string().nonempty().parse(value), {
                 type: 'text',
                 message: 'Checkout Path',
                 initial: `./modules/${name}`
             }),
-            url: () => this.createOverridablePrompt('url', Zod.string().nonempty().url(), {
+            url: () => this.createOverridablePrompt('url', value => Zod.string().nonempty().url().parse(value), {
                 type: 'text',
                 message: 'Submodule Url'
             }),

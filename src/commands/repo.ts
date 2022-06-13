@@ -13,9 +13,10 @@ import * as Prompts from 'prompts';
 
 import { BaseCommand, BaseInteractiveCommand } from './common';
 
-import { resolveOrderedConfigs } from 'lib/config';
-import { commit, sync } from 'lib/actions';
+import { iterateTopologicallyNonMapped } from 'lib/config';
+import { commit, sync, setVersion, incrementVersion, viewVersion, stampVersion } from 'lib/actions';
 import { executeVscode } from 'lib/exec';
+import { StatusTypes } from 'lib/porcelain';
 
 export class InitCommand extends BaseCommand {
     static paths = [['init']];
@@ -39,7 +40,7 @@ export class InitCommand extends BaseCommand {
         });
 
         const configGroups = [];
-        for (const configGroup of resolveOrderedConfigs(targetConfigs))
+        for await (const configGroup of iterateTopologicallyNonMapped(targetConfigs, (item, parent) => item.parentConfig === parent))
             configGroups.push(configGroup);
 
         for (const configGroup of configGroups)
@@ -107,6 +108,8 @@ export class CommitCommand extends BaseInteractiveCommand {
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');
 
+    stageAll = Option.Boolean('--stage-all');
+
     static usage = Command.Usage({
         description: 'Commit'
     });
@@ -119,29 +122,30 @@ export class CommitCommand extends BaseInteractiveCommand {
         });
 
         await commit(rootConfig, {
-            configs: async ({ configs }) => this.createOverridablePrompt('configs', Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()), (initial) => ({
+            configs: async ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()).parse(value), (initial) => ({
                 type: 'multiselect',
                 message: 'Select Modules',
                 choices: configs.map(c => ({ title: c.pathspec, value: c.identifier, selected: initial?.some(tc => tc === c.identifier) }))
             }), {
                 defaultValue: targetConfigs.map(c => c.identifier)
             }),
-            stagedFiles: async ({ config, statuses }) => this.createOverridablePrompt('stagedFiles', Zod.string().array(), (initial) => ({
+            stagedFiles: async ({ config, statuses }) => this.createOverridablePrompt('stagedFiles', value => Zod.string().array().parse(value), (initial) => ({
                 type: 'multiselect',
                 message: `[${Chalk.magenta(config.pathspec)}] Files to Stage`,
                 choices: statuses.map(status => ({ title: status.path, value: status.path, selected: initial?.includes(status.path) }))
             }), {
-                defaultValue: statuses.filter(s => s.staged).map(s => s.path)
+                pathspecPrefix: config.pathspec,
+                defaultValue: statuses.filter(s => s.staged || this.stageAll).map(s => s.path)
             }),
-            message: ({ config }) => this.createOverridablePrompt('message', Zod.string().nonempty(), (initial) => ({
+            message: ({ configs }) => this.createOverridablePrompt('message', value => Zod.string().nonempty().parse(value), (initial) => ({
                 type: 'text',
-                message: `[${Chalk.magenta(config.pathspec)}] Commit Message`,
+                message: `[${Chalk.magenta(configs.map(c => c.pathspec).join(', '))}] Commit Message`,
                 initial
             }), {
-                pathspecPrefix: config.pathspec,
+                // pathspecPrefix: config.pathspec,
                 defaultValue: 'checkpoint'
             }),
-            stage: ({ config }) => this.createOverridablePrompt('stage', Zod.boolean(), {
+            stage: ({ config }) => this.createOverridablePrompt('stage', value => Zod.boolean().parse(value), {
                 type: 'confirm',
                 message: `[${Chalk.magenta(config.pathspec)}] Stage All Changes`,
             }, {
@@ -197,7 +201,7 @@ export class ExecCommand extends BaseInteractiveCommand {
         });
 
         const allConfigs = rootConfig.flattenConfigs();
-        const configs = await this.createOverridablePrompt('configs', Zod.string().array().transform(ids => _(ids).map(id => allConfigs.find(c => c.identifier === id)).compact().value()), (initial) => ({
+        const configs = await this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => allConfigs.find(c => c.identifier === id)).compact().value()).parse(value), (initial) => ({
             type: 'multiselect',
             message: 'Select Modules',
             choices: allConfigs.map(c => ({ title: c.pathspec, value: c.identifier, selected: initial?.some(tc => tc === c.identifier) }))
@@ -205,7 +209,7 @@ export class ExecCommand extends BaseInteractiveCommand {
             defaultValue: targetConfigs.map(c => c.identifier)
         });
 
-        const cmd = await this.createOverridablePrompt('cmd', Zod.string().nonempty(), {
+        const cmd = await this.createOverridablePrompt('cmd', value => Zod.string().nonempty().parse(value), {
             type: 'text',
             message: 'Command'
         });
@@ -270,7 +274,7 @@ export class StatusCommand extends BaseInteractiveCommand {
             included: this.include,
             excluded: this.exclude
         });
-        const configs = await this.createOverridablePrompt('configs', Zod.string().array().transform(ids => _(ids).map(id => allConfigs.find(c => c.identifier === id)).compact().value()), (initial) => ({
+        const configs = await this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => allConfigs.find(c => c.identifier === id)).compact().value()).parse(value), (initial) => ({
             type: 'multiselect',
             message: 'Select Modules',
             choices: allConfigs.map(c => ({ title: c.pathspec, value: c.identifier, selected: initial?.some(tc => tc === c.identifier) }))
@@ -299,20 +303,20 @@ export class StatusCommand extends BaseInteractiveCommand {
                 table.push([
                     Chalk.blue.bold.underline('STAGED') + '\n\n' +
                     stagedChanges.map(status => {
-                        if (status.type === 'untracked')
-                            return Chalk.gray('U ' + status.path);
-                        else if (status.type === 'modified')
-                            return Chalk.yellow('M ' + status.path);
-                        else if (status.type === 'added')
-                            return Chalk.green('A ' + status.path);
-                        else if (status.type === 'deleted')
-                            return Chalk.red('D ' + status.path);
-                        else if (status.type === 'renamed')
-                            return Chalk.yellow('R ' + status.path);
-                        else if (status.type === 'copied')
-                            return Chalk.gray('C ' + status.path);
+                        if (status.type === StatusTypes.Untracked)
+                            return Chalk.gray('U ' + status.path) + (status.isSubmodule ? ` [${Chalk.magenta('SUBMODULE')}]` : '');
+                        else if (status.type === StatusTypes.Modified)
+                            return Chalk.yellow('M ' + status.path) + (status.isSubmodule ? ` [${Chalk.magenta('SUBMODULE')}]` : '');
+                        else if (status.type === StatusTypes.Added)
+                            return Chalk.green('A ' + status.path) + (status.isSubmodule ? ` [${Chalk.magenta('SUBMODULE')}]` : '');
+                        else if (status.type === StatusTypes.Deleted)
+                            return Chalk.red('D ' + status.path) + (status.isSubmodule ? ` [${Chalk.magenta('SUBMODULE')}]` : '');
+                        else if (status.type === StatusTypes.Renamed)
+                            return Chalk.yellow('R ' + status.path) + (status.isSubmodule ? ` [${Chalk.magenta('SUBMODULE')}]` : '');
+                        else if (status.type === StatusTypes.Copied)
+                            return Chalk.gray('C ' + status.path) + (status.isSubmodule ? ` [${Chalk.magenta('SUBMODULE')}]` : '');
                         else
-                            return Chalk.gray('? ' + status.path);
+                            return Chalk.gray('? ' + status.path) + (status.isSubmodule ? ` [${Chalk.magenta('SUBMODULE')}]` : '');
                     }).join('\n'),
                 ]);
             }
@@ -321,20 +325,20 @@ export class StatusCommand extends BaseInteractiveCommand {
                 table.push([
                     Chalk.blue.bold.underline('UNSTAGED') + '\n\n' +
                     unstagedChanges.map(status => {
-                        if (status.type === 'untracked')
-                            return Chalk.gray('U ' + status.path);
-                        else if (status.type === 'modified')
-                            return Chalk.yellow('M ' + status.path);
-                        else if (status.type === 'added')
-                            return Chalk.green('A ' + status.path);
-                        else if (status.type === 'deleted')
-                            return Chalk.red('D ' + status.path);
-                        else if (status.type === 'renamed')
-                            return Chalk.yellow('R ' + status.path);
-                        else if (status.type === 'copied')
-                            return Chalk.gray('C ' + status.path);
+                        if (status.type === StatusTypes.Untracked)
+                            return Chalk.gray('U ' + status.path) + (status.isSubmodule ? ` [${Chalk.magenta('SUBMODULE')}]` : '');
+                        else if (status.type === StatusTypes.Modified)
+                            return Chalk.yellow('M ' + status.path) + (status.isSubmodule ? ` [${Chalk.magenta('SUBMODULE')}]` : '');
+                        else if (status.type === StatusTypes.Added)
+                            return Chalk.green('A ' + status.path) + (status.isSubmodule ? ` [${Chalk.magenta('SUBMODULE')}]` : '');
+                        else if (status.type === StatusTypes.Deleted)
+                            return Chalk.red('D ' + status.path) + (status.isSubmodule ? ` [${Chalk.magenta('SUBMODULE')}]` : '');
+                        else if (status.type === StatusTypes.Renamed)
+                            return Chalk.yellow('R ' + status.path) + (status.isSubmodule ? ` [${Chalk.magenta('SUBMODULE')}]` : '');
+                        else if (status.type === StatusTypes.Copied)
+                            return Chalk.gray('C ' + status.path) + (status.isSubmodule ? ` [${Chalk.magenta('SUBMODULE')}]` : '');
                         else
-                            return Chalk.gray('? ' + status.path);
+                            return Chalk.gray('? ' + status.path) + (status.isSubmodule ? ` [${Chalk.magenta('SUBMODULE')}]` : '');
                     }).join('\n'),
                 ]);
             }
@@ -364,7 +368,7 @@ export class SyncCommand extends BaseInteractiveCommand {
         });
 
         await sync(rootConfig, {
-            configs: async ({ configs }) => this.createOverridablePrompt('configs', Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()), (initial) => ({
+            configs: async ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()).parse(value), (initial) => ({
                 type: 'multiselect',
                 message: 'Select Modules',
                 choices: configs.map(c => ({ title: c.pathspec, value: c.identifier, selected: initial?.some(tc => tc === c.identifier) }))
@@ -1001,13 +1005,13 @@ export class CreateWorkspaceCommand extends BaseInteractiveCommand {
             excluded: this.exclude
         });
 
-        const workspaceName = await this.createOverridablePrompt('name', Zod.string().nonempty(), {
+        const workspaceName = await this.createOverridablePrompt('name', value => Zod.string().nonempty().parse(value), {
             type: 'text',
             message: 'Workspace Name'
         });
         const workspacePath = Path.resolve(`${workspaceName}.code-workspace`);
 
-        const configs = await this.createOverridablePrompt('configs', Zod.string().array().transform(ids => _(ids).map(id => allConfigs.find(c => c.identifier === id)).compact().value()), (initial) => ({
+        const configs = await this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => allConfigs.find(c => c.identifier === id)).compact().value()).parse(value), (initial) => ({
             type: 'multiselect',
             message: 'Select Modules',
             choices: allConfigs.map(c => ({ title: c.pathspec, value: c.identifier, selected: initial?.some(tc => tc === c.identifier) }))
@@ -1065,7 +1069,7 @@ export class OpenWorkspaceCommand extends BaseInteractiveCommand {
             excluded: this.exclude
         });
 
-        const configs = await this.createOverridablePrompt('configs', Zod.string().array().transform(ids => _(ids).map(id => allConfigs.find(c => c.identifier === id)).compact().value()), (initial) => ({
+        const configs = await this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => allConfigs.find(c => c.identifier === id)).compact().value()).parse(value), (initial) => ({
             type: 'multiselect',
             message: 'Select Modules',
             choices: allConfigs.map(c => ({ title: c.pathspec, value: c.identifier, selected: initial?.some(tc => tc === c.identifier) }))
@@ -1096,13 +1100,13 @@ export class GenerateSolutionCommand extends BaseInteractiveCommand {
             excluded: this.exclude
         });
 
-        const solutionName = await this.createOverridablePrompt('name', Zod.string().nonempty(), {
+        const solutionName = await this.createOverridablePrompt('name', value => Zod.string().nonempty().parse(value), {
             type: 'text',
             message: 'Solution Name'
         });
         const solutionPath = Path.resolve(rootConfig.path, `${solutionName}.sln`);
 
-        const configs = await this.createOverridablePrompt('configs', Zod.string().array().transform(ids => _(ids).map(id => allConfigs.find(c => c.identifier === id)).compact().value()), (initial) => ({
+        const configs = await this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => allConfigs.find(c => c.identifier === id)).compact().value()).parse(value), (initial) => ({
             type: 'multiselect',
             message: 'Select Modules',
             choices: allConfigs.map(c => ({ title: c.pathspec, value: c.identifier, selected: initial?.some(tc => tc === c.identifier) }))
@@ -1123,5 +1127,155 @@ export class GenerateSolutionCommand extends BaseInteractiveCommand {
             this.logVerbose(`Adding ${config.pathspec} to solution`);
             await rootConfig.exec(`dotnet sln ${solutionName}.sln add --in-root ${relativePath}`, { stdout: this.context.stdout, dryRun: this.dryRun });
         }
+    }
+}
+
+export class ViewVersionCommand extends BaseInteractiveCommand {
+    static paths = [['version', 'view']];
+
+    releaseName = Option.String('--name');
+
+    include = Option.Array('--include');
+    exclude = Option.Array('--exclude');
+
+    static usage = Command.Usage({
+        description: 'View version',
+        category: 'Version'
+    });
+
+    public async executeCommand() {
+        const rootConfig = await this.loadConfig();
+        const targetConfigs = await rootConfig.resolveFilteredConfigs({
+            included: this.include,
+            excluded: this.exclude
+        });
+
+        await viewVersion(rootConfig, {
+            configs: ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()).parse(value), {
+                type: 'multiselect',
+                message: 'Select Modules',
+                choices: configs.map(c => ({ title: c.pathspec, value: c.identifier, selected: targetConfigs.some(tc => tc.identifier === c.identifier) }))
+            }),
+            stdout: this.context.stdout,
+            dryRun: this.dryRun
+        });
+    }
+}
+export class StampVersionCommand extends BaseInteractiveCommand {
+    static paths = [['version', 'stamp']];
+
+    releaseName = Option.String('--name');
+
+    include = Option.Array('--include');
+    exclude = Option.Array('--exclude');
+
+    static usage = Command.Usage({
+        description: 'Stamp version',
+        category: 'Version'
+    });
+
+    public async executeCommand() {
+        const rootConfig = await this.loadConfig();
+        const targetConfigs = await rootConfig.resolveFilteredConfigs({
+            included: this.include,
+            excluded: this.exclude
+        });
+
+        await stampVersion(rootConfig, {
+            configs: ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()).parse(value), {
+                type: 'multiselect',
+                message: 'Select Modules',
+                choices: configs.map(c => ({ title: c.pathspec, value: c.identifier, selected: targetConfigs.some(tc => tc.identifier === c.identifier) }))
+            }),
+            stdout: this.context.stdout,
+            dryRun: this.dryRun
+        });
+    }
+}
+export class SetVersionCommand extends BaseInteractiveCommand {
+    static paths = [['version', 'set']];
+
+    releaseName = Option.String('--name');
+
+    include = Option.Array('--include');
+    exclude = Option.Array('--exclude');
+
+    static usage = Command.Usage({
+        description: 'Set version',
+        category: 'Version'
+    });
+
+    public async executeCommand() {
+        const rootConfig = await this.loadConfig();
+        const targetConfigs = await rootConfig.resolveFilteredConfigs({
+            included: this.include,
+            excluded: this.exclude
+        });
+
+        await setVersion(rootConfig, {
+            configs: ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()).parse(value), {
+                type: 'multiselect',
+                message: 'Select Modules',
+                choices: configs.map(c => ({ title: c.pathspec, value: c.identifier, selected: targetConfigs.some(tc => tc.identifier === c.identifier) }))
+            }),
+            version: ({ config }) => this.createOverridablePrompt('version', value => Zod.string().nullable().transform(v => v || null).parse(value), initial => ({
+                type: 'text',
+                message: `[${Chalk.magenta(config.pathspec)}] Version`,
+                initial
+            })),
+            stdout: this.context.stdout,
+            dryRun: this.dryRun
+        });
+    }
+}
+export class IncrementVersionCommand extends BaseInteractiveCommand {
+    static paths = [['version', 'increment'], ['increment', 'version']];
+
+    releaseName = Option.String('--name');
+
+    include = Option.Array('--include');
+    exclude = Option.Array('--exclude');
+
+    static usage = Command.Usage({
+        description: 'Increment version',
+        category: 'Version'
+    });
+
+    public async executeCommand() {
+        const rootConfig = await this.loadConfig();
+        const targetConfigs = await rootConfig.resolveFilteredConfigs({
+            included: this.include,
+            excluded: this.exclude
+        });
+
+        await incrementVersion(rootConfig, {
+            configs: ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()).parse(value), {
+                type: 'multiselect',
+                message: 'Select Modules',
+                choices: configs.map(c => ({ title: c.pathspec, value: c.identifier, selected: targetConfigs.some(tc => tc.identifier === c.identifier) }))
+            }),
+            type: () => this.createOverridablePrompt('type', value => Zod.union([ Zod.literal('major'), Zod.literal('minor'), Zod.literal('patch'), Zod.literal('prerelease'), Zod.literal('premajor'), Zod.literal('preminor'), Zod.literal('prepatch') ]).parse(value), {
+                type: 'select',
+                message: 'Release Type',
+                choices: [
+                    { title: 'Prerelease', value: 'prerelease' },
+                    { title: 'Major', value: 'major' },
+                    { title: 'Minor', value: 'minor' },
+                    { title: 'Patch', value: 'patch' },
+                    { title: 'Premajor', value: 'premajor' },
+                    { title: 'Preminor', value: 'preminor' },
+                    { title: 'Prepatch', value: 'prepatch' }
+                ]
+            }),
+            prereleaseIdentifier: () => this.createOverridablePrompt('prereleaseIdentifier', value => Zod.string().parse(value), initial => ({
+                type: 'text',
+                message: 'Prerelease Identifier',
+                initial
+            }), {
+                defaultValue: 'alpha'
+            }),
+            stdout: this.context.stdout,
+            dryRun: this.dryRun
+        });
     }
 }

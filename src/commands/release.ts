@@ -7,7 +7,7 @@ import * as Zod from 'zod';
 import * as Chalk from 'chalk';
 import * as Prompts from 'prompts';
 
-import { BaseCommand, BaseInteractiveCommand } from './common';
+import { BaseCommand, BaseInteractiveCommand, OverridablePromptAnswerTypes } from './common';
 
 import { loadV2Config, Config, Release, Support } from 'lib/config';
 import { closeRelease, createRelease, deleteRelease } from 'lib/actions';
@@ -22,22 +22,12 @@ export class CreateInteractiveCommand extends BaseInteractiveCommand {
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');
 
-    checkout = Option.Boolean('--checkout');
-    intermediate = Option.Boolean('--intermediate');
-
     static usage = Command.Usage({
         description: 'Create release',
         category: 'Release'
     });
 
     public async executeCommand() {
-        Prompts.override({
-            releaseName: this.releaseName,
-            branchName: this.branchName,
-            from: this.from,
-            checkout: this.checkout
-        });
-
         const rootConfig = await this.loadConfig();
         const targetConfigs = await rootConfig.resolveFilteredConfigs({
             included: this.include,
@@ -45,11 +35,11 @@ export class CreateInteractiveCommand extends BaseInteractiveCommand {
         });
 
         await createRelease(rootConfig, {
-            name: () => this.createOverridablePrompt('releaseName', Zod.string().nonempty(), {
+            name: () => this.createOverridablePrompt('releaseName', value => Zod.string().nonempty().parse(value), {
                 type: 'text',
                 message: 'Release Name'
             }),
-            from: ({ config, activeSupport }) => this.createOverridablePrompt('from', Zod.string().url(), (initial) => ({
+            from: ({ config, activeSupport }) => this.createOverridablePrompt('from', value => Zod.string().url().parse(value), (initial) => ({
                 type: 'text',
                 message: `[${Chalk.magenta(config.pathspec)}] From`,
                 initial
@@ -57,7 +47,7 @@ export class CreateInteractiveCommand extends BaseInteractiveCommand {
                 pathspecPrefix: config.pathspec,
                 defaultValue: activeSupport ? `support://${activeSupport}/develop` : 'branch://develop'
             }),
-            branchName: ({ config, fromElement, releaseName }) => this.createOverridablePrompt('branchName', Zod.string(), (initial) => ({
+            branchName: ({ config, fromElement, releaseName }) => this.createOverridablePrompt('branchName', value => Zod.string().parse(value), (initial) => ({
                 type: 'text',
                 message: `[${Chalk.magenta(config.pathspec)}] Branch Name`,
                 initial
@@ -65,19 +55,19 @@ export class CreateInteractiveCommand extends BaseInteractiveCommand {
                 pathspecPrefix: config.pathspec,
                 defaultValue: `${fromElement.type === 'support' ? `support/${fromElement.support.name}/` : ''}release/${releaseName}`
             }),
-            configs: ({ configs }) => this.createOverridablePrompt('configs', Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()), {
+            configs: ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()).parse(value), {
                 type: 'multiselect',
                 message: 'Select Modules',
                 choices: configs.map(c => ({ title: c.pathspec, value: c.identifier, selected: targetConfigs.some(tc => tc.identifier === c.identifier) }))
             }),
-            checkout: ({ config }) => this.createOverridablePrompt('checkout', Zod.boolean(), {
+            checkout: ({ config }) => this.createOverridablePrompt('checkout', value => Zod.boolean().parse(value), {
                 type: 'confirm',
                 message: `[${Chalk.magenta(config.pathspec)}] Checkout`,
             }, {
                 pathspecPrefix: config.pathspec,
-                defaultValue: false
+                defaultValue: true
             }),
-            upstream: ({ config }) => this.createOverridablePrompt('upstream', Zod.string().nullable().transform(v => v ?? undefined), (initial) => ({
+            upstream: ({ config }) => this.createOverridablePrompt('upstream', value => Zod.string().nullable().transform(v => v ?? undefined).parse(value), (initial) => ({
                 type: 'select',
                 message: `[${Chalk.magenta(config.pathspec)}] Upstream`,
                 choices: [
@@ -89,7 +79,14 @@ export class CreateInteractiveCommand extends BaseInteractiveCommand {
                 pathspecPrefix: config.pathspec,
                 defaultValue: config.upstreams[0]?.name ?? null
             }),
-            intermediate: () => this.intermediate,
+            intermediate: ({ config }) => this.createOverridablePrompt('intermediate', value => Zod.boolean().parse(value), (initial) => ({
+                type: 'confirm',
+                message: `[${Chalk.magenta(config.pathspec)}] Intermediate Release`,
+                initial
+            }), {
+                pathspecPrefix: config.pathspec,
+                defaultValue: false
+            }),
             stdout: this.context.stdout,
             dryRun: this.dryRun
         });
@@ -143,9 +140,10 @@ export class DeleteInteractiveCommand extends BaseInteractiveCommand {
         const rootConfig = await this.loadConfig();
 
         await deleteRelease(rootConfig, {
-            name: () => this.prompt('releaseName', Zod.string().nonempty(), {
-                type: 'text',
-                message: 'Feature Name'
+            name: ({ releases }) => this.createOverridablePrompt('releaseName', value => Zod.string().nonempty().parse(value), {
+                type: 'select',
+                message: 'Release Name',
+                choices: releases.map(r => ({ title: r, value: r }))
             }),
             configs: ({ configs }) => this.prompt('configs', Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()), {
                 type: 'multiselect',
@@ -260,37 +258,63 @@ export class CloseInteractiveCommand extends BaseInteractiveCommand {
         const rootConfig = await this.loadConfig();
 
         await closeRelease(rootConfig, {
-            name: ({ releases }) => this.createOverridablePrompt('releaseName', Zod.string().nonempty(), {
+            name: ({ releases }) => this.createOverridablePrompt('releaseName', value => Zod.string().nonempty().parse(value), {
                 type: 'select',
                 message: 'Release Name',
                 choices: releases.map(r => ({ title: r, value: r }))
             }),
-            configs: ({ configs }) => this.createOverridablePrompt('configs', Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()), {
+            configs: ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()).parse(value), {
                 type: 'multiselect',
                 message: 'Select Modules',
                 choices: configs.map(c => ({ title: c.pathspec, value: c.identifier, selected: true }))
             }),
-            confirm: ({ config, message }) => this.createOverridablePrompt('configs', Zod.boolean(), initial => ({
+            confirm: ({ config, message }) => this.createOverridablePrompt('confirm', value => Zod.boolean().parse(value), initial => ({
                 type: 'confirm',
-                message: `[${Chalk.magenta(config.pathspec)}] ${message}`,
+                message: `${config ? `[${Chalk.magenta(config.pathspec)}] ` : ''}${message}`,
                 initial
-            }), {
-                defaultValue: true
-            }),
+            })),
             abort: () => this.abort,
-            deleteLocalBranch: ({ config }) => this.createOverridablePrompt('deleteLocalBranch', Zod.boolean(), initial => ({
+            deleteLocalBranch: ({ config }) => this.createOverridablePrompt('deleteLocalBranch', value => Zod.boolean().parse(value), initial => ({
                 type: 'confirm',
                 message: `[${Chalk.magenta(config.pathspec)}] Delete local branch?`,
                 initial
             }), {
+                answerType: OverridablePromptAnswerTypes.Boolean,
+                pathspecPrefix: config.pathspec,
                 defaultValue: true
             }),
-            deleteRemoteBranch: ({ config }) => this.createOverridablePrompt('deleteRemoteBranch', Zod.boolean(), initial => ({
+            deleteRemoteBranch: ({ config }) => this.createOverridablePrompt('deleteRemoteBranch', value => Zod.boolean().parse(value), initial => ({
                 type: 'confirm',
                 message: `[${Chalk.magenta(config.pathspec)}] Delete remote branch?`,
                 initial
             }), {
+                answerType: OverridablePromptAnswerTypes.Boolean,
+                pathspecPrefix: config.pathspec,
                 defaultValue: true
+            }),
+            tags: ({ config, templates }) => this.createOverridablePrompt('tags', value => Zod.string().array().transform(names => _(names).map(id => templates.find(t => t.name === id)).compact().value()).parse(value), initial => ({
+                type: 'multiselect',
+                message: `[${Chalk.magenta(config.pathspec)}] Select Tag Templates`,
+                choices: templates.map(t => ({ title: t.name, value: t.name, selected: initial?.some(tt => tt === t.name) }))
+            }), {
+                answerType: OverridablePromptAnswerTypes.StringArray,
+                defaultValue: [ templates[0].name ]
+            }),
+            commitMessage: ({ config, messages }) => this.createOverridablePrompt('commitMessage', value => Zod.string().transform(name => messages.find(t => t.name === name)).parse(value), initial => ({
+                type: 'select',
+                message: `[${Chalk.magenta(config.pathspec)}] Select Commit Message`,
+                choices: messages.map(t => ({ title: t.name, value: t.name })),
+                initial: messages.findIndex(m => m.name === initial)
+            }), {
+                defaultValue: messages[0].name
+            }),
+            stagedFiles: async ({ config, statuses }) => this.createOverridablePrompt('stagedFiles', value => Zod.string().array().parse(value), (initial) => ({
+                type: 'multiselect',
+                message: `[${Chalk.magenta(config.pathspec)}] Files to Stage`,
+                choices: statuses.map(status => ({ title: status.path, value: status.path, selected: initial?.includes(status.path) }))
+            }), {
+                pathspecPrefix: config.pathspec,
+                defaultValue: statuses.map(s => s.path)
             }),
             stdout: this.context.stdout,
             dryRun: this.dryRun

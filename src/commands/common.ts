@@ -16,6 +16,12 @@ import { loadSettings } from 'lib/settings';
 import { loadV2Config, getStateValue, loadState } from 'lib/config';
 import { Lazy } from 'lib/misc';
 
+export enum OverridablePromptAnswerTypes {
+    String,
+    Boolean,
+    StringArray
+}
+
 export const AnswersSchema = Zod.string()
     .transform(value => value.split('=', 2))
     .transform(([pattern, value]) => ({ pattern, value }))
@@ -146,7 +152,7 @@ export abstract class BaseInteractiveCommand extends BaseCommand {
         return this.#answers.value;
     }
 
-    protected async createOverridablePrompt<T extends Zod.ZodTypeAny, D = Prompts.InitialReturnValue>(name: string, Schema: T, prompt: Omit<Prompts.PromptObject<"from">, "name"> | ((defaultValue?: D) => Omit<Prompts.PromptObject<"from">, "name">), { answers = [], pathspecPrefix, defaultValue }: Partial<{ answers: { pattern: string, value: string }[], pathspecPrefix: string, defaultValue: D }> = {}): Promise<Zod.infer<T>> {
+    protected async createOverridablePrompt<T, D = Prompts.InitialReturnValue>(name: string, parser: (value: unknown) => T, prompt: Omit<Prompts.PromptObject<"from">, "name"> | ((defaultValue?: D) => Omit<Prompts.PromptObject<"from">, "name">), { answers = [], pathspecPrefix, defaultValue, answerType }: Partial<{ answers: { pattern: string, value: string }[], pathspecPrefix: string, defaultValue: D, answerType: OverridablePromptAnswerTypes }> = {}): Promise<T> {
         const allAnswers = _.reverse([ ...this.answers, ...answers ]);
         if (this.defaultAll)
             allAnswers.push({ pattern: '**', value: '<DEFAULT>' });
@@ -157,18 +163,26 @@ export abstract class BaseInteractiveCommand extends BaseCommand {
                 return;
 
             const value = (() => {
-                if (answer.value === '<DEFAULT>')
+                if (answer.value === '<DEFAULT>') {
                     return defaultValue;
-                else if (answer.value === '<TRUE>')
-                    return true;
-                else if (answer.value === '<FALSE>')
-                    return false;
-                else if (answer.value === '<NULL>')
+                }
+                else if (answer.value === '<NULL>') {
                     return null;
-                else if (answer.value === '<ASK>')
+                }
+                else if (answer.value === '<ASK>') {
                     return undefined;
-                else
-                    return answer.value;
+                }
+                else {
+                    if (answerType === OverridablePromptAnswerTypes.Boolean) {
+                        return ['true'].indexOf(answer.value) >= 0;
+                    }
+                    else if (answerType === OverridablePromptAnswerTypes.StringArray) {
+                        return answer.value.split(',');
+                    }
+                    else {
+                        return answer.value;
+                    }
+                }
             })();
 
             if (value !== undefined)
@@ -177,13 +191,21 @@ export abstract class BaseInteractiveCommand extends BaseCommand {
             return value;
         }
 
-        const answerValue = findAnswerValue(pathspecPrefix ? `${pathspecPrefix}/${name}` : name);
-        if (answerValue !== undefined) {
-            return Schema.parse(answerValue)
+        const rawValue = await (() => {
+            const answerValue = findAnswerValue(pathspecPrefix ? `${pathspecPrefix}/${name}` : name);
+            if (answerValue !== undefined) {
+                return answerValue;
+            }
+            else {
+                return this.prompt(name, _.isFunction(prompt) ? prompt(defaultValue ?? undefined) : prompt);
+            }
+        })();
+
+        try {
+            return parser(rawValue);
         }
-        else {
-            const promptValue = await this.prompt(name, _.isFunction(prompt) ? prompt(defaultValue ?? undefined) : prompt);
-            return Schema.parse(promptValue);
+        catch (err) {
+            throw new Error(`Error when processing ${name} value: ${err}`, { cause: err });
         }
     }
 }
