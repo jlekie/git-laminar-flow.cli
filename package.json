@@ -1,6 +1,6 @@
 {
   "name": "@jlekie/git-laminar-flow-cli",
-  "version": "1.0.0-alpha.12",
+  "version": "1.0.0-alpha.13",
   "license": "UNLICENSED",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -19,7 +19,7 @@
     "/dist"
   ],
   "dependencies": {
-    "@jlekie/git-laminar-flow": "^1.0.0-alpha",
+    "@jlekie/git-laminar-flow": "workspace:*",
     "@rushstack/eslint-patch": "^1.1.1",
     "axios": "^0.26.1",
     "bluebird": "^3.7.2",
@@ -27,8 +27,6 @@
     "cli-table": "^0.3.11",
     "clipanion": "^3.2.0-rc.10",
     "fs-extra": "^10.0.1",
-    "glob": "^7.2.0",
-    "glob-promise": "^4.2.2",
     "js-yaml": "^4.1.0",
     "lib": "link:./dist/lib",
     "lodash": "^4.17.21",
@@ -45,7 +43,6 @@
     "@types/bluebird": "^3.5.36",
     "@types/cli-table": "^0.3.0",
     "@types/fs-extra": "^9.0.13",
-    "@types/glob": "^7.2.0",
     "@types/js-yaml": "^4.0.5",
     "@types/lodash": "^4.14.179",
     "@types/minimatch": "^3.0.5",

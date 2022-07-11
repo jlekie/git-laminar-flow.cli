@@ -4,7 +4,6 @@ import * as Bluebird from 'bluebird';
 import * as Path from 'path';
 import * as FS from 'fs-extra';
 import * as Yaml from 'js-yaml';
-import * as Glob from 'glob-promise';
 import * as Minimatch from 'minimatch';
 
 import Axios from 'axios';
