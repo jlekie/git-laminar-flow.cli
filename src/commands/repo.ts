@@ -1022,28 +1022,54 @@ export class CreateWorkspaceCommand extends BaseInteractiveCommand {
         const workspace = WorkspaceSchema.parse(await FS.pathExists(workspacePath) ? await FS.readJson(workspacePath) : {});
         workspace.folders = workspace.folders ?? [];
 
-        for (const config of configs) {
-            const tmp = (config.pathspec === 'root' ? 'Workspace' : config.pathspec.replace('root/', '').replace(/\//g, ' / ')).split('.');
-            const name = _(tmp)
-                .map(f => f.split('-').map(ff => _.capitalize(ff)).join(''))
-                .value().join('.');
+        for await (const groupedConfigs of iterateTopologicallyNonMapped(configs, (item, parent) => item.parentConfig === parent)) {
 
-            // const name = _.startCase(config.pathspec === 'root' ? 'Workspace' : config.pathspec.replace('root/', '').replace(/\//g, ' / '));
-            const path = './' + Path.relative(Path.dirname(workspacePath), config.path).replace(/\\/g, '/');
-
-            const existingFolder = workspace.folders.find(f => f.glfIdentifier === config.identifier);
-            if (existingFolder) {
-                existingFolder.name = name;
-                existingFolder.path = path;
-            }
-            else {
-                workspace.folders.push({
-                    name,
-                    path,
-                    glfIdentifier: config.identifier
-                });
+            for (const config of groupedConfigs) {
+                const tmp = (config.pathspec === 'root' ? 'Workspace' : config.pathspec.replace('root/', '').replace(/\//g, ' / ')).split('.');
+                const name = _(tmp)
+                    .map(f => f.split('-').map(ff => _.capitalize(ff)).join(''))
+                    .value().join('.');
+    
+                // const name = _.startCase(config.pathspec === 'root' ? 'Workspace' : config.pathspec.replace('root/', '').replace(/\//g, ' / '));
+                const path = './' + Path.relative(Path.dirname(workspacePath), config.path).replace(/\\/g, '/');
+    
+                const existingFolder = workspace.folders.find(f => f.glfIdentifier === config.identifier);
+                if (existingFolder) {
+                    existingFolder.name = name;
+                    existingFolder.path = path;
+                }
+                else {
+                    workspace.folders.push({
+                        name,
+                        path,
+                        glfIdentifier: config.identifier
+                    });
+                }
             }
         }
+
+        // for (const config of configs) {
+        //     const tmp = (config.pathspec === 'root' ? 'Workspace' : config.pathspec.replace('root/', '').replace(/\//g, ' / ')).split('.');
+        //     const name = _(tmp)
+        //         .map(f => f.split('-').map(ff => _.capitalize(ff)).join(''))
+        //         .value().join('.');
+
+        //     // const name = _.startCase(config.pathspec === 'root' ? 'Workspace' : config.pathspec.replace('root/', '').replace(/\//g, ' / '));
+        //     const path = './' + Path.relative(Path.dirname(workspacePath), config.path).replace(/\\/g, '/');
+
+        //     const existingFolder = workspace.folders.find(f => f.glfIdentifier === config.identifier);
+        //     if (existingFolder) {
+        //         existingFolder.name = name;
+        //         existingFolder.path = path;
+        //     }
+        //     else {
+        //         workspace.folders.push({
+        //             name,
+        //             path,
+        //             glfIdentifier: config.identifier
+        //         });
+        //     }
+        // }
 
         await FS.writeJson(workspacePath, workspace, {
             spaces: 2

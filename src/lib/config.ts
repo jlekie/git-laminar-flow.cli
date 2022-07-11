@@ -353,21 +353,21 @@ export async function loadV2Config(uri: string, settings: Settings, { cwd, paren
                 });
         }
         else if (configRef.type === 'glfs') {
-            const [hostUrl, apiKey] = (() => {
+            const glfsRepo = (() => {
                 const matchedRepo = configRef.hostname
                     ? settings.glfsRepositories.find(r => r.name === configRef.hostname)
                     : settings.getDefaultRepo();
 
-                if (matchedRepo)
-                    return [matchedRepo.url, matchedRepo.apiKey];
-                else
-                    return [`http://${configRef.hostname}`];
+                if (!matchedRepo)
+                    throw new Error(`No registry defined for ${configRef.hostname}`);
+
+                return matchedRepo;
             })();
 
-            return await Axios.get(`${hostUrl}/v1/${configRef.namespace}/${configRef.name}`, {
-                auth: apiKey ? {
+            return await Axios.get(`${glfsRepo.url}/v1/${glfsRepo.name}/${configRef.namespace}/${configRef.name}`, {
+                auth: glfsRepo.apiKey ? {
                     username: 'glf.cli',
-                    password: apiKey
+                    password: glfsRepo.apiKey
                 } : undefined
             })
                 .then(response => Config.parse(response.data))
@@ -403,18 +403,23 @@ export async function deleteConfig(uri: string, settings: Settings) {
         await Axios.delete(`${configRef.protocol}://${configRef.url}`);
     }
     else if (configRef.type === 'glfs') {
-        const hostUrl = (() => {
+        const glfsRepo = (() => {
             const matchedRepo = configRef.hostname
                 ? settings.glfsRepositories.find(r => r.name === configRef.hostname)
                 : settings.getDefaultRepo();
 
-            if (matchedRepo)
-                return matchedRepo.url;
-            else
-                return `http://${configRef.hostname}`;
+            if (!matchedRepo)
+                throw new Error(`No registry defined for ${configRef.hostname}`);
+
+            return matchedRepo;
         })();
 
-        await Axios.delete(`${hostUrl}/v1/${configRef.namespace}/${configRef.name}`);
+        await Axios.delete(`${glfsRepo.url}/v1/${glfsRepo.name}/${configRef.namespace}/${configRef.name}`, {
+            auth: glfsRepo.apiKey ? {
+                username: 'glf.cli',
+                password: glfsRepo.apiKey
+            } : undefined
+        });
     }
     else {
         throw new Error(`Unsupported config type ${configRef.type}`);
@@ -1043,6 +1048,9 @@ export class Config {
             if (await FS.pathExists(this.path)) {
                 if (await FS.pathExists(Path.resolve(this.path, '.git'))) {
                     await exec(`git fetch --all --prune`, { cwd: this.path, stdout, dryRun });
+
+                    if (!await this.execCmd('git rev-parse HEAD', { stdout, dryRun }).then(() => true).catch(() => false))
+                        await exec(`git commit --allow-empty -m "initial commit (GLFCID: ${this.identifier})"`, { cwd: this.path, stdout, dryRun });
                 }
                 else {
                     const originUpstream = this.upstreams.find(r => r.name == 'origin');
@@ -1066,9 +1074,8 @@ export class Config {
                 if (originUpstream) {
                     await exec(`git clone ${originUpstream.url} ${this.path}`, { stdout, dryRun });
 
-                    if (!await this.branchExists('master', { stdout, dryRun })) {
+                    if (await this.exec('git rev-parse HEAD', { stdout, dryRun }).then(() => false).catch(() => true))
                         await exec(`git commit --allow-empty -m "initial commit (GLFCID: ${this.identifier})"`, { cwd: this.path, stdout, dryRun });
-                    }
                 }
                 else {
                     await FS.ensureDir(this.path);
@@ -1093,7 +1100,8 @@ export class Config {
                     currentBranch && await this.checkoutBranch(currentBranch, { stdout, dryRun });
                 }
                 else {
-                    const initialSha = await this.execCmd('git rev-list --max-parents=0 HEAD', { stdout, dryRun });
+                    // const initialSha = await this.execCmd('git rev-list --max-parents=0 HEAD', { stdout, dryRun });
+                    const initialSha = await this.execCmd('git rev-parse HEAD', { stdout, dryRun });
                     await this.createBranch('master', { source: initialSha, stdout, dryRun });
                 }
             }
@@ -1113,7 +1121,8 @@ export class Config {
                     currentBranch && await this.checkoutBranch(currentBranch, { stdout, dryRun });
                 }
                 else {
-                    const initialSha = await this.execCmd('git rev-list --max-parents=0 HEAD', { stdout, dryRun });
+                    // const initialSha = await this.execCmd('git rev-list --max-parents=0 HEAD', { stdout, dryRun });
+                    const initialSha = await this.execCmd('git rev-parse HEAD', { stdout, dryRun });
                     await this.createBranch('develop', { source: initialSha, stdout, dryRun });
                 }
 
@@ -1151,6 +1160,11 @@ export class Config {
             // Initialize submodules
             for (const submodule of this.submodules)
                 await submodule.init({ stdout, dryRun });
+            // const addedSubmodules = await Bluebird.map(this.submodules, submodule => submodule.init({ stdout, dryRun }).then(r => ({ submodule, ...r })), { concurrency: 1 }).filter(s => s.submoduleAdded);
+            // if (addedSubmodules.length > 0 && await this.hasStagedChanges({ stdout, dryRun })) {
+            //     // await this.stage(['.gitmodules', ...addedSubmodules.map(s => s.submodule.path) ], { stdout, dryRun, force: true });
+            //     await this.commit('submodule synchronization', { stdout, dryRun });
+            // }
 
             // Initialize features
             for (const feature of this.features)
@@ -1176,6 +1190,15 @@ export class Config {
         if (writeGitmdoulesConfig && this.submodules.length > 0)
             this.writeGitmodulesConfig({ stdout, dryRun });
 
+        for (const integration of this.integrations) {
+            const plugin = await integration.loadPlugin();
+            await plugin.init?.({
+                config: this,
+                stdout,
+                dryRun
+            });
+        }
+
         const sourceUriPath = Path.join(this.path, '.glf', 'source_uri');
         await FS.outputFile(sourceUriPath, this.sourceUri, {
             encoding: 'utf8'
@@ -1196,12 +1219,13 @@ export class Config {
         const gitmodulesStream = FS.createWriteStream(gitmodulesPath);
         for (const repo of this.submodules) {
             const resolvedPath = Path.posix.join(repo.path);
+            const relativePath = './' + Path.relative(repo.parentConfig.path, repo.config.path).replace('\\', '/');
 
             const originUpstream = repo.config.upstreams.find(u => u.name === 'origin');
 
             gitmodulesStream.write(`[submodule "${repo.name}"]\n`);
             gitmodulesStream.write(`    path = ${resolvedPath}\n`);
-            gitmodulesStream.write(`    url = "${originUpstream?.url ?? ''}"\n`);
+            gitmodulesStream.write(`    url = "${originUpstream?.url ?? relativePath}"\n`);
         }
         gitmodulesStream.close();
 
@@ -1320,25 +1344,25 @@ export class Config {
             }
         }
         else if (configRef.type === 'glfs') {
-            const [hostUrl, apiKey] = (() => {
+            const glfsRepo = (() => {
                 const matchedRepo = configRef.hostname
                     ? this.settings.glfsRepositories.find(r => r.name === configRef.hostname)
                     : this.settings.getDefaultRepo();
 
-                if (matchedRepo)
-                    return [matchedRepo.url, matchedRepo.apiKey];
-                else
-                    return [`http://${configRef.hostname}`];
+                if (!matchedRepo)
+                    throw new Error(`No registry defined for ${configRef.hostname}`);
+
+                return matchedRepo;
             })();
 
             if (!dryRun) {
-                await Axios.put(`${hostUrl}/v1/${configRef.namespace}/${configRef.name}`, this.toHash(), {
+                await Axios.put(`${glfsRepo.url}/v1/${glfsRepo.name}/${configRef.namespace}/${configRef.name}`, this.toHash(), {
                     headers: {
                         'if-match': this.baseHash
                     },
-                    auth: apiKey ? {
+                    auth: glfsRepo.apiKey ? {
                         username: 'glf.cli',
-                        password: apiKey
+                        password: glfsRepo.apiKey
                     } : undefined
                 });
             }
@@ -1369,11 +1393,11 @@ export class Config {
     public async fetch({ stdout, dryRun }: ExecParams = {}) {
         await exec(`git fetch --all`, { cwd: this.path, stdout, dryRun });
     }
-    public async stage(files: string[], { stdout, dryRun }: ExecParams = {}) {
+    public async stage(files: string[], { stdout, dryRun, force }: ExecParams & StageParams = {}) {
         if (!files.length)
             return;
 
-        await exec(`git add ${files.join(' ')}`, { cwd: this.path, stdout, dryRun });
+        await exec(`git add${force ? ' -f' : ''} ${files.join(' ')}`, { cwd: this.path, stdout, dryRun });
     }
     public async commit(message: string, { amend, allowEmpty, stdout, dryRun }: ExecParams & CommitParams = {}) {
         await exec(`git commit -m "${message}"${amend ? ' --amend' : ''}${allowEmpty ? ' --allow-empty' : ''}`, { cwd: this.path, stdout, dryRun });
@@ -1575,7 +1599,7 @@ export class Config {
     public toRecursiveHash(): Zod.infer<typeof RecursiveConfigSchema> {
         return {
             ...this.toHash(),
-            submodules: this.submodules.map(s => s.toRecursiveHash())
+            submodules: this.submodules.length ? this.submodules.map(s => s.toRecursiveHash()) : undefined
         }
     }
 
@@ -1655,7 +1679,7 @@ export class Config {
 
             for (const integration of this.integrations) {
                 const plugin = await integration.loadPlugin();
-                await plugin.updateVersion(oldVersion, version, {
+                await plugin.updateVersion?.(oldVersion, version, {
                     config: this,
                     stdout,
                     dryRun
@@ -1740,14 +1764,22 @@ export class Submodule {
     public resolvePath() {
         return Path.join(this.parentConfig?.path ?? '.', this.path);
     }
+    public resolveTags() {
+        return [ ...this.tags, ...this.config.tags ];
+    }
 
     public async init({ stdout, dryRun }: ExecParams = {}) {
         // await this.config.init({ stdout, dryRun });
 
         // const relativePath = Path.relative(this.parentConfig.path, this.config.path);
 
-        if (await this.parentConfig.execCmd(`git submodule status ${this.path}`, { stdout, dryRun }).then(r => false).catch(() => true))
-            await this.parentConfig.exec(`git submodule add -f --name ${this.name} ${this.config.upstreams.length > 0 ? this.config.upstreams[0].url : this.path} ${this.path}`, { stdout, dryRun });
+        // const submoduleAdded = await this.parentConfig.execCmd(`git submodule status ${this.path}`, { stdout, dryRun }).then(r => false).catch(() => true);
+        // if (submoduleAdded)
+        //     await this.parentConfig.exec(`git submodule add -f --name ${this.name} ${this.config.upstreams.length > 0 ? this.config.upstreams[0].url : this.path} ${this.path}`, { stdout, dryRun });
+
+        // return {
+        //     submoduleAdded
+        // };
     }
 
     public async fetch({ stdout, dryRun }: ExecParams = {}) {
@@ -1845,12 +1877,16 @@ export class Feature {
 
     public async init({ stdout, dryRun }: ExecParams = {}) {
         if (!await this.parentConfig.branchExists(this.branchName, { stdout })) {
+            const currentBranch = await this.parentConfig.resolveCurrentBranch({ stdout, dryRun });
+
             if (this.upstream && await this.parentConfig.remoteBranchExists(this.branchName, this.upstream, { stdout })) {
                 await exec(`git checkout -b ${this.branchName} ${this.upstream}/${this.branchName}`, { cwd: this.parentConfig.path, stdout, dryRun });
             }
             else {
                 await this.parentConfig.createBranch(this.branchName, { source: this.sourceSha, stdout, dryRun });
             }
+
+            await this.parentConfig.checkoutBranch(currentBranch, { stdout, dryRun });
         }
     }
 
@@ -1940,12 +1976,16 @@ export class Release {
 
     public async init({ stdout, dryRun }: ExecParams = {}) {
         if (!await this.parentConfig.branchExists(this.branchName, { stdout })) {
+            const currentBranch = await this.parentConfig.resolveCurrentBranch({ stdout, dryRun });
+
             if (this.upstream && await this.parentConfig.remoteBranchExists(this.branchName, this.upstream, { stdout })) {
                 await exec(`git checkout -b ${this.branchName} ${this.upstream}/${this.branchName}`, { cwd: this.parentConfig.path, stdout, dryRun });
             }
             else {
                 await this.parentConfig.createBranch(this.branchName, { source: this.sourceSha, stdout, dryRun });
             }
+
+            await this.parentConfig.checkoutBranch(currentBranch, { stdout, dryRun });
         }
     }
 
@@ -2037,12 +2077,16 @@ export class Hotfix {
 
     public async init({ stdout, dryRun }: ExecParams = {}) {
         if (!await this.parentConfig.branchExists(this.branchName, { stdout })) {
+            const currentBranch = await this.parentConfig.resolveCurrentBranch({ stdout, dryRun });
+
             if (this.upstream && await this.parentConfig.remoteBranchExists(this.branchName, this.upstream, { stdout })) {
                 await exec(`git checkout -b ${this.branchName} ${this.upstream}/${this.branchName}`, { cwd: this.parentConfig.path, stdout, dryRun });
             }
             else {
                 await this.parentConfig.createBranch(this.branchName, { source: this.sourceSha, stdout, dryRun });
             }
+
+            await this.parentConfig.checkoutBranch(currentBranch, { stdout, dryRun });
         }
     }
 
@@ -2137,21 +2181,29 @@ export class Support {
 
     public async init({ stdout, dryRun }: ExecParams = {}) {
         if (!await this.parentConfig.branchExists(this.masterBranchName, { stdout })) {
+            const currentBranch = await this.parentConfig.resolveCurrentBranch({ stdout, dryRun });
+
             if (this.upstream && await this.parentConfig.remoteBranchExists(this.masterBranchName, this.upstream, { stdout })) {
                 await exec(`git checkout -b ${this.masterBranchName} ${this.upstream}/${this.masterBranchName}`, { cwd: this.parentConfig.path, stdout, dryRun });
             }
             else {
                 await this.parentConfig.createBranch(this.masterBranchName, { source: this.sourceSha, stdout, dryRun });
             }
+
+            await this.parentConfig.checkoutBranch(currentBranch, { stdout, dryRun });
         }
 
         if (!await this.parentConfig.branchExists(this.developBranchName, { stdout })) {
+            const currentBranch = await this.parentConfig.resolveCurrentBranch({ stdout, dryRun });
+
             if (this.upstream && await this.parentConfig.remoteBranchExists(this.developBranchName, this.upstream, { stdout })) {
                 await exec(`git checkout -b ${this.developBranchName} ${this.upstream}/${this.developBranchName}`, { cwd: this.parentConfig.path, stdout, dryRun });
             }
             else {
                 await this.parentConfig.createBranch(this.developBranchName, { source: this.sourceSha, stdout, dryRun });
             }
+
+            await this.parentConfig.checkoutBranch(currentBranch, { stdout, dryRun });
         }
 
         // Initialize features
@@ -2372,6 +2424,9 @@ export interface CreateBranchParams {
 export interface TagParams {
     source?: string;
     annotation?: string;
+}
+export interface StageParams {
+    force?: boolean;
 }
 export interface CommitParams {
     amend?: boolean;

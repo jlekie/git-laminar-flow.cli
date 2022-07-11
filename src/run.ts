@@ -9,7 +9,7 @@ const [ node, app, ...args ] = process.argv;
 const cli = new Cli({
     binaryName: '[ git-laminar-flow, glf ]',
     binaryLabel: 'Git Laminar Flow',
-    binaryVersion: '1.0.0'
+    binaryVersion: '1.0.0-alpha.12'
 });
 
 cli.register(RepoCommands.InitCommand)

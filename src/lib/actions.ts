@@ -1211,7 +1211,9 @@ export async function sync(rootConfig: Config, { stdout, dryRun, ...params }: Ac
         return;
 
     const configs = await params.configs({ configs: applicableConfigs });
-    for await (const groupedConfigs of iterateTopologicallyNonMapped(configs, (item, parent) => item.parentConfig === parent)) {
+    for await (const groupedConfigs of iterateTopologicallyNonMapped(allConfigs, (item, parent) => item.parentConfig === parent, {
+        filter: config => configs.some(c => c === config)
+    })) {
         await Bluebird.map(Bluebird.mapSeries(groupedConfigs, async config => ({
             config,
             // stagedFiles: await params.stagedFiles({ config, statuses: await config.resolveStatuses({ stdout, dryRun }) }),
@@ -1223,7 +1225,8 @@ export async function sync(rootConfig: Config, { stdout, dryRun, ...params }: Ac
                 if (branchStatus.differs) {
                     await config.checkout(branchStatus.branchName, async () => {
                         if (await branchStatus.resolveCommitsBehind({ stdout }) > 0)
-                            await config.exec(`git merge ${branchStatus.upstreamBranchName}`, { stdout, dryRun });
+                            // await config.exec(`git merge ${branchStatus.upstreamBranchName}`, { stdout, dryRun });
+                            await config.exec(`git pull ${branchStatus.upstream} ${branchStatus.branchName}`, { stdout, dryRun });
                         if (await params.push() && (!branchStatus.upstreamBranchExists || await branchStatus.resolveCommitsAhead({ stdout }) > 0))
                             await config.exec(`git push -u ${branchStatus.upstream} ${branchStatus.branchName}`, { stdout, dryRun });
                     }, { stdout, dryRun });
