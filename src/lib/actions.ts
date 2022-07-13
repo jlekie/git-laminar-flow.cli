@@ -382,7 +382,7 @@ export async function deleteSupport(rootConfig: Config, { stdout, dryRun, ...par
     const allConfigs = await Bluebird.filter(rootConfig.flattenConfigs(), c => c.hasElement(`support://${supportName}`));
     if (!allConfigs.length)
         return;
-    
+
     const configs = await params.configs({ configs: allConfigs });
     for (const config of configs) {
         const { support } = await config.findElement('support', supportName);

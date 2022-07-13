@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 import 'source-map-support/register';
 
-import { Builtins, Cli } from 'clipanion';
+import * as _ from 'lodash';
+import * as Bluebird from 'bluebird';
+import { Builtins, Cli, Command, Option } from 'clipanion';
 
-import { SubmoduleCommands, FeatureCommands, ReleaseCommands, RepoCommands, HotfixCommands, SupportCommands, ConfigCommands, SettingsCommands } from './commands';
+import { SubmoduleCommands, FeatureCommands, ReleaseCommands, RepoCommands, HotfixCommands, SupportCommands, ConfigCommands, SettingsCommands, BaseCommand, registerPluginCommands } from './commands';
 
 const [ node, app, ...args ] = process.argv;
+
 const cli = new Cli({
     binaryName: '[ git-laminar-flow, glf ]',
     binaryLabel: 'Git Laminar Flow',
@@ -61,9 +64,32 @@ cli.register(ConfigCommands.MigrateCommand);
 process.stdout.isTTY && cli.register(SettingsCommands.InitCommand);
 process.stdout.isTTY && cli.register(SettingsCommands.AddRepoCommand);
 
-cli.register(Builtins.HelpCommand);
-cli.register(Builtins.VersionCommand);
+const preCli = new Cli();
+preCli.register(class extends BaseCommand {
+    rawAnswers = Option.Rest();
 
-cli.runExit(args).catch(err => {
+    public async executeCommand() {
+        const config = await this.reloadConfig();
+
+        const pluginCommands = await Bluebird.mapSeries(config.integrations, async integration => {
+            const plugin = await integration.loadPlugin();
+            if (!plugin.registerCommands)
+                return;
+
+            return await plugin.registerCommands();
+        }).then(r => _(r).flatten().compact().value());
+
+        for (const PluginCommand of pluginCommands)
+            cli.register(PluginCommand);
+    }
+});
+preCli.run(args).then(() => {
+    cli.register(Builtins.HelpCommand);
+    cli.register(Builtins.VersionCommand);
+
+    cli.runExit(args).catch(err => {
+        throw new Error(`Application failed to launch; ${err}`);
+    });
+}).catch(err => {
     throw new Error(`Application failed to launch; ${err}`);
 });

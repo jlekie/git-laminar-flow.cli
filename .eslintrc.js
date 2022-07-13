@@ -20,5 +20,5 @@ module.exports = {
     "@typescript-eslint/no-empty-interface": 0,
     'no-console': 1
   },
-  ignorePatterns: [ '.eslintrc.js' ]
+  ignorePatterns: [ '.eslintrc.js', 'plugins/*.js' ]
 }

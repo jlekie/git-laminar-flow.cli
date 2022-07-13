@@ -16,7 +16,8 @@
   },
   "files": [
     "/src",
-    "/dist"
+    "/dist",
+    "/plugins"
   ],
   "dependencies": {
     "@jlekie/git-laminar-flow": "workspace:*",

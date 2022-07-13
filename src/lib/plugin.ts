@@ -1,6 +1,9 @@
 import * as Stream from 'stream';
 import * as Zod from 'zod';
 
+import { CommandClass } from 'clipanion';
+import { BaseInteractiveCommand } from '../commands/common';
+
 import { Config } from './config';
 
 export interface Plugin {
@@ -15,6 +18,8 @@ export interface Plugin {
         stdout?: Stream.Writable
         dryRun?: boolean;
     }): void | Promise<void>;
+
+    registerCommands?(): Array<CommandClass> | Promise<Array<CommandClass>>;
 }
 
 export type PluginHandler = (options: Record<string, unknown>) => Plugin;

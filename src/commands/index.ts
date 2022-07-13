@@ -7,3 +7,5 @@ export * as HotfixCommands from './hotfix';
 export * as SupportCommands from './support';
 export * as ConfigCommands from './config';
 export * as SettingsCommands from './settings';
+export * from './common';
+export * from './plugin';
