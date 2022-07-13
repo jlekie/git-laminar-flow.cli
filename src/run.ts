@@ -66,10 +66,12 @@ process.stdout.isTTY && cli.register(SettingsCommands.AddRepoCommand);
 
 const preCli = new Cli();
 preCli.register(class extends BaseCommand {
-    rawAnswers = Option.Rest();
+    args = Option.Proxy();
 
     public async executeCommand() {
         const config = await this.reloadConfig();
+        if (!config)
+            return;
 
         const pluginCommands = await Bluebird.mapSeries(config.integrations, async integration => {
             const plugin = await integration.loadPlugin();

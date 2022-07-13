@@ -82,17 +82,22 @@ export abstract class BaseCommand extends Command {
 
         const configPath = await this.resolveConfigPath();
         if (!configPath)
-            throw new Error('Must specify a config URI');
+            return;
+            // throw new Error('Must specify a config URI');
 
         BaseCommand.preloadedConfig = await loadV2Config(configPath, settings, { stdout: this.context.stdout, dryRun: this.dryRun })
 
         return BaseCommand.preloadedConfig;
     }
     protected async loadConfig() {
-        if (!BaseCommand.preloadedConfig)
-            throw new Error('Config not preloaded');
+        if (BaseCommand.preloadedConfig)
+            return BaseCommand.preloadedConfig;
 
-        return BaseCommand.preloadedConfig;
+        const config = await this.reloadConfig();
+        if (!config)
+            throw new Error('Could not load config');
+
+        return config;
     }
 
     // protected async prompt<T extends Zod.ZodRawShape>(params: T, promptOptions: Prompts.PromptObject<keyof T & string>) {

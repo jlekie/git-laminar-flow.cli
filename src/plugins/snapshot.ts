@@ -5,7 +5,7 @@ import * as Path from 'path';
 import * as FS from 'fs-extra';
 import * as Yaml from 'js-yaml';
 
-import { Command } from 'clipanion';
+import { Command, Option } from 'clipanion';
 
 import { PluginHandler } from '../lib/plugin';
 import { BaseInteractiveCommand } from '../commands/common';
@@ -57,18 +57,21 @@ const createPlugin: PluginHandler = (options) => {
                     category: 'Snapshot'
                 });
 
+                snapshotManifestPath = Option.String('--path', parsedOptions.snapshotManifestPath);
+                targetBranch = Option.String('--branch', parsedOptions.targetBranch ?? 'HEAD');
+
                 public async executeCommand() {
                     const config = await this.loadConfig();
 
-                    const snapshotManifestPath = Path.resolve(parsedOptions.snapshotManifestPath);
+                    const snapshotManifestPath = Path.resolve(this.snapshotManifestPath);
 
                     const version = config.resolveVersion();
                     const timestamp = Date.now();
 
                     const repos = await Bluebird.mapSeries(config.submodules, async submodule => ({
                         name: submodule.name,
-                        hash: await submodule.config.resolveCommitSha(parsedOptions.targetBranch ?? 'HEAD', { stdout: this.context.stdout, dryRun: this.dryRun }),
-                        glfHash: await submodule.config.calculateHash()
+                        hash: await submodule.config.resolveCommitSha(this.targetBranch, { stdout: this.context.stdout, dryRun: this.dryRun }),
+                        glfHash: submodule.config.calculateHash()
                     }));
 
                     const manifestContent = Yaml.dump({
@@ -88,10 +91,12 @@ const createPlugin: PluginHandler = (options) => {
                     category: 'Snapshot'
                 });
 
+                snapshotManifestPath = Option.String('--path', parsedOptions.snapshotManifestPath);
+
                 public async executeCommand() {
                     const config = await this.loadConfig();
 
-                    const snapshotManifestPath = Path.resolve(parsedOptions.snapshotManifestPath);
+                    const snapshotManifestPath = Path.resolve(this.snapshotManifestPath);
                     const snapshotManifest = await FS.readFile(snapshotManifestPath, 'utf8')
                         .then(Yaml.load)
                         .then(SnapshotManifestSchema.parse);
@@ -101,7 +106,7 @@ const createPlugin: PluginHandler = (options) => {
                         if (!submodule)
                             continue;
 
-                        await submodule.config.checkoutBranch(repo.hash, { orphan: true, stdout: this.context.stdout, dryRun: this.dryRun });
+                        await submodule.config.checkoutBranch(repo.hash, { stdout: this.context.stdout, dryRun: this.dryRun });
                     }
                 }
             }
