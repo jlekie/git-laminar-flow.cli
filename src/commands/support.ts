@@ -11,8 +11,8 @@ import * as Prompts from 'prompts';
 
 import { BaseCommand, BaseInteractiveCommand, AnswersSchema } from './common';
 
-import { loadV2Config, Config, Release, Support } from 'lib/config';
-import { createSupport, deleteSupport } from 'lib/actions';
+import { loadV2Config, Config, Release, Support } from '../lib/config';
+import { createSupport, deleteSupport } from '../lib/actions';
 
 export class CreateInteractiveCommand extends BaseInteractiveCommand {
     static paths = [['support', 'create'], ['create', 'support']];

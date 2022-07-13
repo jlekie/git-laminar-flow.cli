@@ -10,8 +10,8 @@ import * as Prompts from 'prompts';
 
 import { BaseCommand, BaseInteractiveCommand } from './common';
 
-import { loadV2Config, Config, Release, Hotfix, Support } from 'lib/config';
-import { createHotfix, deleteHotfix } from 'lib/actions';
+import { loadV2Config, Config, Release, Hotfix, Support } from '../lib/config';
+import { createHotfix, deleteHotfix } from '../lib/actions';
 
 export class CreateInteractiveCommand extends BaseInteractiveCommand {
     static paths = [['hotfix', 'create']];

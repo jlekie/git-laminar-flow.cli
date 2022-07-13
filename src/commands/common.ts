@@ -12,9 +12,9 @@ import * as Prompts from 'prompts';
 
 import * as Minimatch from 'minimatch';
 
-import { loadSettings } from 'lib/settings';
-import { Config, loadV2Config, getStateValue, loadState } from 'lib/config';
-import { Lazy } from 'lib/misc';
+import { loadSettings } from '../lib/settings';
+import { Config, loadV2Config, getStateValue, loadState } from '../lib/config';
+import { Lazy } from '../lib/misc';
 
 export enum OverridablePromptAnswerTypes {
     String,

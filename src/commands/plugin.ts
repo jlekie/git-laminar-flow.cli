@@ -10,7 +10,7 @@ import { Command, Option } from 'clipanion';
 import { BaseCommand, BaseInteractiveCommand } from './common';
 
 import { Config } from '../lib/config';
-import { loadSettings } from 'lib/settings';
+import { loadSettings } from '../lib/settings';
 
 // async function resolveConfigPath() {
 //     const sourceUriPath = Path.resolve('.glf', 'source_uri');

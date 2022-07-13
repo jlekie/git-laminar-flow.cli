@@ -9,7 +9,7 @@ import * as Chalk from 'chalk';
 
 import * as Semver from 'semver';
 
-import { Config, Feature, Release, Hotfix, Support, Element, iterateTopologicallyNonMapped, iterateTopologicallyMapped, Submodule, TagTemplate, MessageTemplate } from 'lib/config';
+import { Config, Feature, Release, Hotfix, Support, Element, iterateTopologicallyNonMapped, iterateTopologicallyMapped, Submodule, TagTemplate, MessageTemplate } from './config';
 
 export interface CommonParams {
     stdout?: Stream.Writable;

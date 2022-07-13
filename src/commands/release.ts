@@ -9,8 +9,8 @@ import * as Prompts from 'prompts';
 
 import { BaseCommand, BaseInteractiveCommand, OverridablePromptAnswerTypes } from './common';
 
-import { loadV2Config, Config, Release, Support } from 'lib/config';
-import { closeRelease, createRelease, deleteRelease } from 'lib/actions';
+import { loadV2Config, Config, Release, Support } from '../lib/config';
+import { closeRelease, createRelease, deleteRelease } from '../lib/actions';
 
 export class CreateInteractiveCommand extends BaseInteractiveCommand {
     static paths = [['release', 'create'], ['create', 'release']];

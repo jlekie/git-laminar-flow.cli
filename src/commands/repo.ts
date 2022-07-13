@@ -13,10 +13,10 @@ import * as Prompts from 'prompts';
 
 import { BaseCommand, BaseInteractiveCommand } from './common';
 
-import { iterateTopologicallyNonMapped } from 'lib/config';
-import { commit, sync, setVersion, incrementVersion, viewVersion, stampVersion } from 'lib/actions';
-import { executeVscode } from 'lib/exec';
-import { StatusTypes } from 'lib/porcelain';
+import { iterateTopologicallyNonMapped } from '../lib/config';
+import { commit, sync, setVersion, incrementVersion, viewVersion, stampVersion } from '../lib/actions';
+import { executeVscode } from '../lib/exec';
+import { StatusTypes } from '../lib/porcelain';
 
 export class InitCommand extends BaseCommand {
     static paths = [['init']];

@@ -10,8 +10,8 @@ import * as Prompts from 'prompts';
 
 import { BaseCommand, BaseInteractiveCommand, AnswersSchema } from './common';
 
-import { loadV2Config, Config, Feature, Support } from 'lib/config';
-import { closeFeature, createFeature, deleteFeature, mergeFeature, syncFeature } from 'lib/actions';
+import { loadV2Config, Config, Feature, Support } from '../lib/config';
+import { closeFeature, createFeature, deleteFeature, mergeFeature, syncFeature } from '../lib/actions';
 
 export class CreateInteractiveCommand extends BaseInteractiveCommand {
     static paths = [['feature', 'create'], ['create', 'feature']];

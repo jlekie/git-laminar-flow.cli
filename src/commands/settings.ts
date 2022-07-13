@@ -16,10 +16,10 @@ import * as Zod from 'zod';
 import { RecursiveConfigSchema } from '@jlekie/git-laminar-flow';
 
 import { BaseInteractiveCommand } from './common';
-import { exec, execCmd, ExecOptions } from 'lib/exec';
+import { exec, execCmd, ExecOptions } from '../lib/exec';
 
-import { loadConfig, loadV2Config, Config, Release, Hotfix, Support } from 'lib/config';
-import { executeVscode } from 'lib/exec';
+import { loadConfig, loadV2Config, Config, Release, Hotfix, Support } from '../lib/config';
+import { executeVscode } from '../lib/exec';
 
 export class InitCommand extends BaseInteractiveCommand {
     static paths = [['settings', 'init']];

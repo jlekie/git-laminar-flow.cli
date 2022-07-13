@@ -3,8 +3,8 @@ import * as Zod from 'zod';
 
 import { BaseCommand, BaseInteractiveCommand } from './common';
 
-import { loadV2Config } from 'lib/config';
-import { createSubmodule } from 'lib/actions';
+import { loadV2Config } from '../lib/config';
+import { createSubmodule } from '../lib/actions';
 
 export class CreateInteractiveCommand extends BaseInteractiveCommand {
     static paths = [['submodule', 'create']];

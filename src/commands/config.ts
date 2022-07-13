@@ -16,9 +16,8 @@ import * as Zod from 'zod';
 import { RecursiveConfigSchema } from '@jlekie/git-laminar-flow';
 
 import { BaseCommand } from './common';
-import { exec, execCmd, executeEditor, ExecOptions } from 'lib/exec';
-
-import { loadConfig, loadV2Config, Config, Release, Hotfix, Support } from 'lib/config';
+import { exec, execCmd, executeEditor, ExecOptions } from '../lib/exec';
+import { loadConfig, loadV2Config, Config, Release, Hotfix, Support } from '../lib/config';
 
 export class ImportCommand extends BaseCommand {
     static paths = [['config', 'import']];
