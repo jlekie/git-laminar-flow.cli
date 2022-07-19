@@ -61,7 +61,7 @@ export class Settings {
     public async save(path: string) {
         const content = Yaml.dump(this);
 
-        await FS.writeFile(path, content, 'utf8');
+        await FS.outputFile(path, content, 'utf8');
     }
 }
 export class GlfsRepository {

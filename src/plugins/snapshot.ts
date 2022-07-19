@@ -21,7 +21,7 @@ const SnapshotManifestSchema = Zod.object({
     repos: Zod.object({
         name: Zod.string(),
         hash: Zod.string(),
-        glfHash: Zod.string()
+        glfid: Zod.string()
     }).array()
 });
 
@@ -71,7 +71,7 @@ const createPlugin: PluginHandler = (options) => {
                     const repos = await Bluebird.mapSeries(config.submodules, async submodule => ({
                         name: submodule.name,
                         hash: await submodule.config.resolveCommitSha(this.targetBranch, { stdout: this.context.stdout, dryRun: this.dryRun }),
-                        glfHash: submodule.config.calculateHash()
+                        glfid: submodule.config.identifier
                     }));
 
                     const manifestContent = Yaml.dump({

@@ -15,6 +15,29 @@ import * as Minimatch from 'minimatch';
 import { loadSettings } from '../lib/settings';
 import { Config, loadV2Config, getStateValue, loadState } from '../lib/config';
 import { Lazy } from '../lib/misc';
+import { ExecOptions } from 'lib/exec';
+
+let preloadedConfig: Config | null = null;
+async function resolveConfigPath(configPath?: string) {
+    const sourceUriPath = Path.resolve('.glf', 'source_uri');
+    const sourceUri = await FS.pathExists(sourceUriPath)
+        ? await FS.readFile(sourceUriPath, 'utf8')
+        : undefined;
+
+    return configPath ?? sourceUri;
+}
+export async function reloadConfig(settingsPath: string, configPath?: string, { stdout, dryRun }: ExecOptions = {}) {
+    const settings = await loadSettings(settingsPath);
+
+    const resolvedConfigPath = await resolveConfigPath(configPath);
+    if (!resolvedConfigPath)
+        return;
+        // throw new Error('Must specify a config URI');
+
+    preloadedConfig = await loadV2Config(resolvedConfigPath, settings, { stdout, dryRun })
+
+    return preloadedConfig;
+}
 
 export enum OverridablePromptAnswerTypes {
     String,
@@ -28,8 +51,7 @@ export const AnswersSchema = Zod.string()
     .array();
 
 export abstract class BaseCommand extends Command {
-    private static preloadedConfig?: Config;
-
+    cwd = Option.String('--cwd');
     dryRun = Option.Boolean('--dry-run');
     configPath = Option.String('--config');
     settingsPath = Option.String('--settings', Path.resolve(OS.homedir(), '.glf/cli.yml'));
@@ -70,28 +92,14 @@ export abstract class BaseCommand extends Command {
     }
 
     protected async resolveConfigPath() {
-        const sourceUriPath = Path.resolve('.glf', 'source_uri');
-        const sourceUri = await FS.pathExists(sourceUriPath)
-            ? await FS.readFile(sourceUriPath, 'utf8')
-            : undefined;
-
-        return this.configPath ?? sourceUri;
+        return resolveConfigPath(this.configPath);
     }
     protected async reloadConfig() {
-        const settings = await loadSettings(this.settingsPath);
-
-        const configPath = await this.resolveConfigPath();
-        if (!configPath)
-            return;
-            // throw new Error('Must specify a config URI');
-
-        BaseCommand.preloadedConfig = await loadV2Config(configPath, settings, { stdout: this.context.stdout, dryRun: this.dryRun })
-
-        return BaseCommand.preloadedConfig;
+        return reloadConfig(this.settingsPath, this.configPath);
     }
     protected async loadConfig() {
-        if (BaseCommand.preloadedConfig)
-            return BaseCommand.preloadedConfig;
+        if (preloadedConfig)
+            return preloadedConfig;
 
         const config = await this.reloadConfig();
         if (!config)

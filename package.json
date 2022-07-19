@@ -1,6 +1,6 @@
 {
   "name": "@jlekie/git-laminar-flow-cli",
-  "version": "1.0.0-alpha.15",
+  "version": "1.0.0-alpha.16",
   "license": "UNLICENSED",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -31,6 +31,7 @@
     "js-yaml": "^4.1.0",
     "lodash": "^4.17.21",
     "minimatch": "^5.0.1",
+    "minimist": "^1.2.6",
     "prompts": "^2.4.2",
     "semver": "^7.3.7",
     "source-map-support": "^0.5.21",
@@ -46,6 +47,7 @@
     "@types/js-yaml": "^4.0.5",
     "@types/lodash": "^4.14.179",
     "@types/minimatch": "^3.0.5",
+    "@types/minimist": "^1",
     "@types/node": "^16.11.26",
     "@types/prompts": "~2.0.14",
     "@types/semver": "^7",

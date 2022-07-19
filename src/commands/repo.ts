@@ -26,7 +26,7 @@ export class InitCommand extends BaseCommand {
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');
 
-    writeGitmodules = Option.Boolean('--write-gitmodules');
+    // writeGitmodules = Option.Boolean('--write-gitmodules');
 
     static usage = Command.Usage({
         description: 'Initialize repo'
@@ -44,7 +44,7 @@ export class InitCommand extends BaseCommand {
             configGroups.push(configGroup);
 
         for (const configGroup of configGroups)
-            await Bluebird.map(configGroup, config => config.init({ stdout: this.context.stdout, dryRun: this.dryRun, writeGitmdoulesConfig: this.writeGitmodules }));
+            await Bluebird.map(configGroup, config => config.init({ stdout: this.context.stdout, dryRun: this.dryRun, writeGitmdoulesConfig: true }));
 
         // for (const config of targetConfigs)
         //     await config.init({ stdout: this.context.stdout, dryRun: this.dryRun });
@@ -1242,7 +1242,7 @@ export class SetVersionCommand extends BaseInteractiveCommand {
             configs: ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()).parse(value), {
                 type: 'multiselect',
                 message: 'Select Modules',
-                choices: configs.map(c => ({ title: c.pathspec, value: c.identifier, selected: targetConfigs.some(tc => tc.identifier === c.identifier) }))
+                choices: configs.map(c => ({ title: `${c.pathspec} [${c.resolveVersion()}]`, value: c.identifier, selected: targetConfigs.some(tc => tc.identifier === c.identifier) }))
             }),
             version: ({ config }) => this.createOverridablePrompt('version', value => Zod.string().nullable().transform(v => v || null).parse(value), initial => ({
                 type: 'text',

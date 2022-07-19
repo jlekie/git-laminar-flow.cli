@@ -1142,41 +1142,41 @@ export async function commit(rootConfig: Config, { stdout, dryRun, ...params }: 
     message: ActionParam<string, { configs: Config[] }>;
     stage?: ActionParam<boolean, { config: Config }>;
 }>) {
-    const allConfigs = await Bluebird.filter(rootConfig.flattenConfigs(), config => config.resolveStatuses({ stdout, dryRun }).then(s => s.length > 0));
-    if (!allConfigs.length)
-        return;
-
-    const configs = await params.configs({ configs: allConfigs });
-    for await (const groupedConfigs of iterateTopologicallyNonMapped(configs, (item, parent) => item.parentConfig === parent)) {
-        const message = await params.message({ configs: groupedConfigs })
-
-        await Bluebird.map(Bluebird.mapSeries(groupedConfigs, async config => {
-            return {
-                config,
-                stagedFiles: await params.stagedFiles({ config, statuses: await Bluebird.filter(config.resolveStatuses({ stdout, dryRun }), s => !s.isSubmodule) }),
-                // message: await params.message({ config })
-            };
-        }), async ({ config, stagedFiles }) => {
-            await config.stage(stagedFiles, { stdout, dryRun });
-            await config.commit(message, { stdout, dryRun });
-        });
-    }
-
     // const allConfigs = await Bluebird.filter(rootConfig.flattenConfigs(), config => config.resolveStatuses({ stdout, dryRun }).then(s => s.length > 0));
     // if (!allConfigs.length)
     //     return;
 
     // const configs = await params.configs({ configs: allConfigs });
-    // await Bluebird.map(Bluebird.mapSeries(configs, async config => {
-    //     return {
-    //         config,
-    //         stagedFiles: await params.stagedFiles({ config, statuses: await config.resolveStatuses({ stdout, dryRun }) }),
-    //         message: await params.message({ config })
-    //     };
-    // }), async ({ config, message, stagedFiles }) => {
-    //     await config.stage(stagedFiles, { stdout, dryRun });
-    //     await config.commit(message, { stdout, dryRun });
-    // });
+    // for await (const groupedConfigs of iterateTopologicallyNonMapped(configs, (item, parent) => item.parentConfig === parent)) {
+    //     const message = await params.message({ configs: groupedConfigs })
+
+    //     await Bluebird.map(Bluebird.mapSeries(groupedConfigs, async config => {
+    //         return {
+    //             config,
+    //             stagedFiles: await params.stagedFiles({ config, statuses: await Bluebird.filter(config.resolveStatuses({ stdout, dryRun }), s => !s.isSubmodule) }),
+    //             // message: await params.message({ config })
+    //         };
+    //     }), async ({ config, stagedFiles }) => {
+    //         await config.stage(stagedFiles, { stdout, dryRun });
+    //         await config.commit(message, { stdout, dryRun });
+    //     });
+    // }
+
+    const allConfigs = await Bluebird.filter(rootConfig.flattenConfigs(), config => config.resolveStatuses({ stdout, dryRun }).then(s => s.length > 0));
+    if (!allConfigs.length)
+        return;
+
+    const configs = await params.configs({ configs: allConfigs });
+    await Bluebird.map(Bluebird.mapSeries(configs, async config => {
+        return {
+            config,
+            stagedFiles: await params.stagedFiles({ config, statuses: await config.resolveStatuses({ stdout, dryRun }) }),
+            message: await params.message({ configs })
+        };
+    }), async ({ config, message, stagedFiles }) => {
+        await config.stage(stagedFiles, { stdout, dryRun });
+        await config.commit(message, { stdout, dryRun });
+    });
 }
 
 export async function sync(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
