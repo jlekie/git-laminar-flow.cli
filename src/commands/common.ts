@@ -66,7 +66,7 @@ export abstract class BaseCommand extends Command {
                 this.logError(`Command fault: ${err}`)
 
             return 2;
-        })
+        });
     }
     abstract executeCommand(): Promise<number | void>;
 
