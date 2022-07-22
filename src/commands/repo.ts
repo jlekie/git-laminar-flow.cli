@@ -1211,7 +1211,7 @@ export class StampVersionCommand extends BaseInteractiveCommand {
             configs: ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()).parse(value), {
                 type: 'multiselect',
                 message: 'Select Modules',
-                choices: configs.map(c => ({ title: c.pathspec, value: c.identifier, selected: targetConfigs.some(tc => tc.identifier === c.identifier) }))
+                choices: configs.map(c => ({ title: `${c.pathspec} [${c.resolveVersion()}]`, value: c.identifier, selected: targetConfigs.some(tc => tc.identifier === c.identifier) }))
             }),
             stdout: this.context.stdout,
             dryRun: this.dryRun
@@ -1278,7 +1278,7 @@ export class IncrementVersionCommand extends BaseInteractiveCommand {
             configs: ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()).parse(value), {
                 type: 'multiselect',
                 message: 'Select Modules',
-                choices: configs.map(c => ({ title: c.pathspec, value: c.identifier, selected: targetConfigs.some(tc => tc.identifier === c.identifier) }))
+                choices: configs.map(c => ({ title: `${c.pathspec} [${c.resolveVersion()}]`, value: c.identifier, selected: targetConfigs.some(tc => tc.identifier === c.identifier) }))
             }),
             type: () => this.createOverridablePrompt('type', value => Zod.union([ Zod.literal('major'), Zod.literal('minor'), Zod.literal('patch'), Zod.literal('prerelease'), Zod.literal('premajor'), Zod.literal('preminor'), Zod.literal('prepatch') ]).parse(value), {
                 type: 'select',

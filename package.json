@@ -1,6 +1,6 @@
 {
   "name": "@jlekie/git-laminar-flow-cli",
-  "version": "1.0.0-alpha.16",
+  "version": "1.0.0-alpha.17",
   "license": "UNLICENSED",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -12,7 +12,8 @@
   "scripts": {
     "lint": "eslint -c .eslintrc.js src/**",
     "build": "tsc --build",
-    "watch": "tsc --watch --preserveWatchOutput"
+    "watch": "tsc --watch --preserveWatchOutput",
+    "publish": "yarn npm publish --access=public"
   },
   "files": [
     "/src",
