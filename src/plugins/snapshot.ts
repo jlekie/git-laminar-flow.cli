@@ -71,7 +71,8 @@ const createPlugin: PluginHandler = (options) => {
                     const repos = await Bluebird.mapSeries(config.submodules, async submodule => ({
                         name: submodule.name,
                         hash: await submodule.config.resolveCommitSha(this.targetBranch, { stdout: this.context.stdout, dryRun: this.dryRun }),
-                        glfid: submodule.config.identifier
+                        glfid: submodule.config.identifier,
+                        version: submodule.config.resolveVersion()
                     }));
 
                     const manifestContent = Yaml.dump({
