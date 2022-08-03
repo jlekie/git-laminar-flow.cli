@@ -570,20 +570,23 @@ export async function closeRelease(rootConfig: Config, { stdout, dryRun, ...para
 
 
     const prompts = await Bluebird.mapSeries(params.configs({ configs: applicableConfigs }), async config => {
+        const commitMessageTemplates = config.flattenCommitMessageTemplates();
+        const tagTemplates = config.flattenTagTemplates();
+
         return {
             config,
             release: await config.findElement('release', releaseName).then(({ release }) => release),
             abort: await params.abort({ config }),
             deleteLocalBranch: await params.deleteLocalBranch?.({ config }),
             deleteRemoteBranch: await params.deleteRemoteBranch?.({ config }),
-            commitMessageTemplate: await params.commitMessage?.({
+            commitMessageTemplate: commitMessageTemplates.length ? await params.commitMessage?.({
                 config,
-                messages: config.flattenCommitMessageTemplates()
-            }),
-            tagTemplates: await params.tags?.({
+                messages: commitMessageTemplates
+            }) : undefined,
+            tagTemplates: (tagTemplates.length ? await params.tags?.({
                 config,
-                templates: config.flattenTagTemplates()
-            }) ?? []
+                templates: tagTemplates
+            }) : undefined) ?? []
         };
     });
 
