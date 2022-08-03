@@ -196,7 +196,7 @@ export class MigrateCommand extends BaseCommand {
             throw new Error('Must specify a config URI');
 
         const settings = await this.loadSettings();
-        const config = await loadV2Config(configPath, settings, { stdout: this.context.stdout, dryRun: this.dryRun });
+        const config = await loadV2Config(configPath, settings, { verify: false, stdout: this.context.stdout, dryRun: this.dryRun });
         const targetConfigs = await config.resolveFilteredConfigs({
             included: this.include ?? [ 'repo://root' ],
             excluded: this.exclude
