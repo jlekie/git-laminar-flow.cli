@@ -1207,6 +1207,11 @@ export class Config {
         await FS.writeFile(identifierPath, this.identifier, {
             encoding: 'utf8'
         });
+
+        const sourceConfigPath = Path.join(this.path, '.glf', 'source_config.yml');
+        await FS.outputFile(sourceConfigPath, Yaml.dump(this.toHash()), {
+            encoding: 'utf8'
+        });
     }
 
     public writeGitmodulesConfig({ stdout, dryRun }: ExecParams = {}) {
@@ -1302,6 +1307,16 @@ export class Config {
         // stdout = stdout && TestTransform.create(stdout, Chalk.gray('[saveV2]'));
 
         stdout?.write(Chalk.gray(`Saving config to ${this.sourceUri}\n`));
+
+        // if (!dryRun) {
+        //     const content = Yaml.dump(this);
+
+        //     const sourceUriPath = Path.join(this.path, '.glf', 'source_config.yml');
+        //     await FS.outputFile(sourceUriPath, content, {
+        //         encoding: 'utf8'
+        //     });
+        //     stdout?.write(Chalk.gray(`Config backup written to ${sourceUriPath}\n`));
+        // }
 
         const configRef = parseConfigReference(this.sourceUri);
         if (configRef.type === 'file') {
