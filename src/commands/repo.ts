@@ -1,4 +1,5 @@
 import { Command, Option } from 'clipanion';
+import * as Typanion from 'typanion';
 import * as Minimatch from 'minimatch';
 import * as Bluebird from 'bluebird';
 import * as _ from 'lodash';
@@ -26,6 +27,8 @@ export class InitCommand extends BaseCommand {
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');
 
+    parallelism = Option.String('--parallelism', { validator: Typanion.isNumber() });
+
     // writeGitmodules = Option.Boolean('--write-gitmodules');
 
     static usage = Command.Usage({
@@ -44,7 +47,7 @@ export class InitCommand extends BaseCommand {
             configGroups.push(configGroup);
 
         for (const configGroup of configGroups)
-            await Bluebird.map(configGroup, config => config.init({ stdout: this.context.stdout, dryRun: this.dryRun, writeGitmdoulesConfig: true }));
+            await Bluebird.map(configGroup, config => config.init({ stdout: this.context.stdout, dryRun: this.dryRun, writeGitmdoulesConfig: true }), this.parallelism ? { concurrency: this.parallelism } : undefined);
 
         // for (const config of targetConfigs)
         //     await config.init({ stdout: this.context.stdout, dryRun: this.dryRun });
