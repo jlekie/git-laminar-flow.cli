@@ -16,7 +16,7 @@ const [ node, app, ...args ] = process.argv;
 const cli = new Cli({
     binaryName: '[ git-laminar-flow, glf ]',
     binaryLabel: 'Git Laminar Flow',
-    binaryVersion: '1.0.0-alpha.12'
+    binaryVersion: '1.0.0-alpha.24'
 });
 
 cli.register(RepoCommands.InitCommand)
@@ -61,12 +61,12 @@ process.stdout.isTTY && cli.register(SubmoduleCommands.CreateInteractiveCommand)
 cli.register(SupportCommands.ActivateCommand);
 
 cli.register(ConfigCommands.ImportCommand);
-process.stdout.isTTY && cli.register(ConfigCommands.EditCommand);
+cli.register(ConfigCommands.EditCommand);
 cli.register(ConfigCommands.ViewCommand);
 cli.register(ConfigCommands.MigrateCommand);
 
-process.stdout.isTTY && cli.register(SettingsCommands.InitCommand);
-process.stdout.isTTY && cli.register(SettingsCommands.AddRepoCommand);
+cli.register(SettingsCommands.InitCommand);
+cli.register(SettingsCommands.AddRepoCommand);
 
 const PreArgsSchema = Zod.object({
     cwd: Zod.string().optional(),
@@ -86,7 +86,7 @@ const preArgs = PreArgsSchema.parse(Minimist(args, {
     if (preArgs.cwd)
         process.chdir(preArgs.cwd);
 
-    const config = await reloadConfig(preArgs.settings)
+    const config = await reloadConfig(preArgs.settings).catch(() => null)
     if (!config)
         return;
 
