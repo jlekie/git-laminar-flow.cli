@@ -55,10 +55,12 @@ export class CreateInteractiveCommand extends BaseInteractiveCommand {
                 pathspecPrefix: config.pathspec,
                 defaultValue: `${fromElement.type === 'support' ? `support/${fromElement.support.name}/` : ''}release/${releaseName}`
             }),
-            configs: ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()).parse(value), {
+            configs: async ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()).parse(value), (initial) => ({
                 type: 'multiselect',
                 message: 'Select Modules',
-                choices: configs.map(c => ({ title: c.pathspec, value: c.identifier, selected: targetConfigs.some(tc => tc.identifier === c.identifier) }))
+                choices: configs.map(c => ({ title: c.pathspec, value: c.identifier, selected: initial?.some(tc => tc === c.identifier) }))
+            }), {
+                defaultValue: targetConfigs.map(c => c.identifier)
             }),
             checkout: ({ config }) => this.createOverridablePrompt('checkout', value => Zod.boolean().parse(value), {
                 type: 'confirm',
@@ -263,10 +265,17 @@ export class CloseInteractiveCommand extends BaseInteractiveCommand {
                 message: 'Release Name',
                 choices: releases.map(r => ({ title: r, value: r }))
             }),
-            configs: ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()).parse(value), {
+            // configs: ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()).parse(value), {
+            //     type: 'multiselect',
+            //     message: 'Select Modules',
+            //     choices: configs.map(c => ({ title: c.pathspec, value: c.identifier, selected: true }))
+            // }),
+            configs: async ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()).parse(value), (initial) => ({
                 type: 'multiselect',
                 message: 'Select Modules',
-                choices: configs.map(c => ({ title: c.pathspec, value: c.identifier, selected: true }))
+                choices: configs.map(c => ({ title: c.pathspec, value: c.identifier, selected: initial?.some(tc => tc === c.identifier) }))
+            }), {
+                defaultValue: configs.map(c => c.identifier)
             }),
             confirm: ({ config, message }) => this.createOverridablePrompt('confirm', value => Zod.boolean().parse(value), initial => ({
                 type: 'confirm',

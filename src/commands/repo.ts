@@ -1298,6 +1298,8 @@ export class IncrementVersionCommand extends BaseInteractiveCommand {
                     { title: 'Preminor', value: 'preminor' },
                     { title: 'Prepatch', value: 'prepatch' }
                 ]
+            }, {
+                defaultValue: 'prerelease'
             }),
             prereleaseIdentifier: () => this.createOverridablePrompt('prereleaseIdentifier', value => Zod.string().parse(value), initial => ({
                 type: 'text',
