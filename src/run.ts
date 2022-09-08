@@ -16,7 +16,7 @@ const [ node, app, ...args ] = process.argv;
 const cli = new Cli({
     binaryName: '[ git-laminar-flow, glf ]',
     binaryLabel: 'Git Laminar Flow',
-    binaryVersion: '1.0.0-alpha.28'
+    binaryVersion: '1.0.0-alpha.29'
 });
 
 cli.register(RepoCommands.InitCommand)
@@ -32,31 +32,31 @@ cli.register(RepoCommands.CommitCommand);
 cli.register(RepoCommands.CreateWorkspaceCommand);
 cli.register(RepoCommands.OpenWorkspaceCommand);
 cli.register(RepoCommands.GenerateSolutionCommand);
-process.stdout.isTTY && cli.register(RepoCommands.ViewVersionCommand);
-process.stdout.isTTY && cli.register(RepoCommands.SetVersionCommand);
-process.stdout.isTTY && cli.register(RepoCommands.IncrementVersionCommand);
-process.stdout.isTTY && cli.register(RepoCommands.StampVersionCommand);
+cli.register(RepoCommands.ViewVersionCommand);
+cli.register(RepoCommands.SetVersionCommand);
+cli.register(RepoCommands.IncrementVersionCommand);
+cli.register(RepoCommands.StampVersionCommand);
 
 // cli.register(SubmoduleCommands.CloneCommand);
 
-process.stdout.isTTY ? cli.register(FeatureCommands.CreateInteractiveCommand) : cli.register(FeatureCommands.CreateCommand);
-process.stdout.isTTY ? cli.register(ReleaseCommands.CreateInteractiveCommand) : cli.register(ReleaseCommands.CreateCommand);
-process.stdout.isTTY ? cli.register(HotfixCommands.CreateInteractiveCommand) : cli.register(HotfixCommands.CreateCommand);
-process.stdout.isTTY ? cli.register(SupportCommands.CreateInteractiveCommand) : cli.register(SupportCommands.CreateCommand);
+cli.register(FeatureCommands.CreateInteractiveCommand);
+cli.register(ReleaseCommands.CreateInteractiveCommand);
+cli.register(HotfixCommands.CreateInteractiveCommand);
+cli.register(SupportCommands.CreateInteractiveCommand);
 
-process.stdout.isTTY && cli.register(FeatureCommands.DeleteInteractiveCommand);
-process.stdout.isTTY && cli.register(ReleaseCommands.DeleteInteractiveCommand);
-process.stdout.isTTY && cli.register(HotfixCommands.DeleteInteractiveCommand);
-process.stdout.isTTY && cli.register(SupportCommands.DeleteInteractiveCommand);
+cli.register(FeatureCommands.DeleteInteractiveCommand);
+cli.register(ReleaseCommands.DeleteInteractiveCommand);
+cli.register(HotfixCommands.DeleteInteractiveCommand);
+cli.register(SupportCommands.DeleteInteractiveCommand);
 
-process.stdout.isTTY && cli.register(FeatureCommands.CloseInteractiveCommand);
-process.stdout.isTTY && cli.register(ReleaseCommands.CloseInteractiveCommand);
+cli.register(FeatureCommands.CloseInteractiveCommand);
+cli.register(ReleaseCommands.CloseInteractiveCommand);
 
-process.stdout.isTTY && cli.register(FeatureCommands.MergeInteractiveCommand);
+cli.register(FeatureCommands.MergeInteractiveCommand);
 
-process.stdout.isTTY && cli.register(FeatureCommands.SyncInteractiveCommand);
+cli.register(FeatureCommands.SyncInteractiveCommand);
 
-process.stdout.isTTY && cli.register(SubmoduleCommands.CreateInteractiveCommand);
+cli.register(SubmoduleCommands.CreateInteractiveCommand);
 
 cli.register(SupportCommands.ActivateCommand);
 
