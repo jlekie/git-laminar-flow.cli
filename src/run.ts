@@ -16,7 +16,7 @@ const [ node, app, ...args ] = process.argv;
 const cli = new Cli({
     binaryName: '[ git-laminar-flow, glf ]',
     binaryLabel: 'Git Laminar Flow',
-    binaryVersion: '1.0.0-alpha.24'
+    binaryVersion: '1.0.0-alpha.28'
 });
 
 cli.register(RepoCommands.InitCommand)
@@ -74,13 +74,14 @@ const PreArgsSchema = Zod.object({
     settings: Zod.string().default(Path.resolve(OS.homedir(), '.glf/cli.yml'))
 });
 
-const passthroughArgs: string[] = [];
+// const passthroughArgs: string[] = [];
+// console.log(args)
 const preArgs = PreArgsSchema.parse(Minimist(args, {
     string: [ 'cwd' ],
-    unknown: (arg) => {
-        passthroughArgs.push(arg);
-        return false;
-    }
+    // unknown: (arg) => {
+    //     passthroughArgs.push(arg);
+    //     return false;
+    // }
 }));
 (async () => {
     if (preArgs.cwd)
@@ -104,7 +105,7 @@ const preArgs = PreArgsSchema.parse(Minimist(args, {
     cli.register(Builtins.HelpCommand);
     cli.register(Builtins.VersionCommand);
 
-    await cli.runExit(passthroughArgs);
+    await cli.runExit(args);
 }).catch(err => {
     throw new Error(`Application failed to launch; ${err}`);
 });

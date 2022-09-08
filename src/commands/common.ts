@@ -167,7 +167,7 @@ export abstract class BaseCommand extends Command {
 }
 
 export abstract class BaseInteractiveCommand extends BaseCommand {
-    rawAnswers = Option.Rest({ name: 'answers' });
+    rawAnswers = Option.Array('-a,--answer', []);
     defaultAll = Option.Boolean('--default-all');
 
     #answers = new Lazy(() => AnswersSchema.parse(this.rawAnswers))
