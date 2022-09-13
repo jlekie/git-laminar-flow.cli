@@ -303,7 +303,7 @@ export async function deleteFeature(rootConfig: Config, { stdout, dryRun, ...par
         const { feature } = await config.findElement('feature', featureName);
 
         if (await config.resolveCurrentBranch({ stdout, dryRun }) === feature.branchName)
-            await config.checkoutBranch('develop', { stdout, dryRun });
+            await config.checkoutBranch(config.resolveDevelopBranchName(), { stdout, dryRun });
 
         if (await config.branchExists(feature.branchName, { stdout, dryRun }))
             await config.deleteBranch(feature.branchName, { stdout, dryRun });
@@ -336,7 +336,7 @@ export async function deleteRelease(rootConfig: Config, { stdout, dryRun, ...par
         const { release } = await config.findElement('release', releaseName);
 
         if (await config.resolveCurrentBranch({ stdout, dryRun }) === release.branchName)
-            await config.checkoutBranch('develop', { stdout, dryRun });
+            await config.checkoutBranch(config.resolveDevelopBranchName(), { stdout, dryRun });
 
         if (await config.branchExists(release.branchName, { stdout, dryRun }))
             await config.deleteBranch(release.branchName, { stdout, dryRun });
@@ -362,7 +362,7 @@ export async function deleteHotfix(rootConfig: Config, { stdout, dryRun, ...para
         const { hotfix } = await config.findElement('hotfix', hotfixName);
 
         if (await config.resolveCurrentBranch({ stdout, dryRun }) === hotfix.branchName)
-            await config.checkoutBranch('develop', { stdout, dryRun });
+            await config.checkoutBranch(config.resolveDevelopBranchName(), { stdout, dryRun });
 
         if (await config.branchExists(hotfix.branchName, { stdout, dryRun }))
             await config.deleteBranch(hotfix.branchName, { stdout, dryRun });
@@ -388,7 +388,7 @@ export async function deleteSupport(rootConfig: Config, { stdout, dryRun, ...par
         const { support } = await config.findElement('support', supportName);
 
         if ([ support.masterBranchName, support.developBranchName ].indexOf(await config.resolveCurrentBranch({ stdout, dryRun })) >= 0)
-            await config.checkoutBranch('develop', { stdout, dryRun });
+            await config.checkoutBranch(config.resolveDevelopBranchName(), { stdout, dryRun });
 
         if (await config.branchExists(support.masterBranchName, { stdout, dryRun }))
             await config.deleteBranch(support.masterBranchName, { stdout, dryRun });
@@ -454,7 +454,7 @@ export async function closeFeature(rootConfig: Config, { stdout, dryRun, ...para
                     if (await config.isDirty({ stdout }))
                         throw new Error(`Cannot merge, please commit all outstanding changes`);
 
-                    await config.checkoutBranch(feature.parentSupport?.developBranchName ?? 'develop', { stdout, dryRun });
+                    await config.checkoutBranch(feature.parentSupport?.developBranchName ?? config.resolveDevelopBranchName(), { stdout, dryRun });
                     if (await config.isDirty({ stdout }))
                         throw new Error(`Cannot merge, develop has uncommited or staged changes`);
 
@@ -650,7 +650,7 @@ export async function closeRelease(rootConfig: Config, { stdout, dryRun, ...para
 
                 try {
                     if (!await config.getStateValue([ release.stateKey, 'closing', 'develop' ], 'boolean')) {
-                        await config.swapCheckoutTree(config => config.releases.find(r => r.name === release.name && r.parentSupport?.name === release.parentSupport?.name)?.parentSupport?.developBranchName ?? 'develop', async () => {
+                        await config.swapCheckoutTree(config => config.releases.find(r => r.name === release.name && r.parentSupport?.name === release.parentSupport?.name)?.parentSupport?.developBranchName ?? config.resolveDevelopBranchName(), async () => {
                             await config.merge(release.branchName, { stdout, dryRun });
 
                             // await config.stage(await Bluebird.filter(config.resolveStatuses({ stdout, dryRun }), s => !!s.isSubmodule).map(s => s.path), { stdout, dryRun });
@@ -693,7 +693,7 @@ export async function closeRelease(rootConfig: Config, { stdout, dryRun, ...para
                             version: release.parentConfig.resolveVersion()
                         };
 
-                        await config.swapCheckoutTree(config => config.releases.find(r => r.name === release.name && r.parentSupport?.name === release.parentSupport?.name)?.parentSupport?.masterBranchName ?? 'master', async () => {
+                        await config.swapCheckoutTree(config => config.releases.find(r => r.name === release.name && r.parentSupport?.name === release.parentSupport?.name)?.parentSupport?.masterBranchName ?? config.resolveMasterBranchName(), async () => {
                             await config.merge(release.branchName, { stdout, dryRun });
 
                             // await config.stage(await Bluebird.filter(config.resolveStatuses({ stdout, dryRun }), s => !!s.isSubmodule).map(s => s.path), { stdout, dryRun });
@@ -732,7 +732,7 @@ export async function closeRelease(rootConfig: Config, { stdout, dryRun, ...para
                 const { config, release, deleteLocalBranch, deleteRemoteBranch } = groupedConfig;
 
                 try {
-                    await config.checkoutBranch(release.parentSupport?.developBranchName ?? 'develop', { stdout, dryRun });
+                    await config.checkoutBranch(release.parentSupport?.developBranchName ?? config.resolveDevelopBranchName(), { stdout, dryRun });
 
                     if (await config.branchExists(release.branchName, { stdout, dryRun }) && deleteLocalBranch)
                         await config.deleteBranch(release.branchName, { stdout, dryRun });
@@ -1193,8 +1193,8 @@ export async function sync(rootConfig: Config, { stdout, dryRun, ...params }: Ac
 
         await config.fetch({ stdout, dryRun });
 
-        const master = await config.resolveBranchStatus('master', 'origin', { stdout });
-        const develop = await config.resolveBranchStatus('develop', 'origin', { stdout });
+        const master = await config.resolveBranchStatus(config.resolveMasterBranchName(), 'origin', { stdout });
+        const develop = await config.resolveBranchStatus(config.resolveDevelopBranchName(), 'origin', { stdout });
 
         const features = await Bluebird
             .map(config.features, feature => feature.upstream ? config.resolveBranchStatus(feature.branchName, feature.upstream, { stdout }) : undefined)

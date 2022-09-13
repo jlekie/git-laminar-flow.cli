@@ -183,7 +183,7 @@ export class SyncCommand extends BaseCommand {
     static paths = [['release', 'sync']];
 
     releaseName = Option.String('--release', { required: true });
-    branchName = Option.String('--branch', 'develop');
+    branchName = Option.String('--branch');
 
     static usage = Command.Usage({
         description: 'Sync release from branch',
@@ -200,7 +200,7 @@ export class SyncCommand extends BaseCommand {
 
             try {
                 await release.parentConfig.checkoutBranch(release.branchName, { stdout: this.context.stdout, dryRun: this.dryRun })
-                await release.parentConfig.merge(this.branchName, { stdout: this.context.stdout, dryRun: this.dryRun }).catch(async () => {
+                await release.parentConfig.merge(this.branchName ?? release.parentConfig.resolveDevelopBranchName(), { stdout: this.context.stdout, dryRun: this.dryRun }).catch(async () => {
                     this.context.stdout.write(Chalk.yellow(`Merge failed, aborting...\n`));
                     await release.parentConfig.abortMerge({ stdout: this.context.stdout, dryRun: this.dryRun });
                 });
@@ -232,7 +232,7 @@ export class MergeCommand extends BaseCommand {
             const baseBranch = await release.parentConfig.resolveCurrentBranch({ stdout: this.context.stdout });
 
             try {
-                await release.parentConfig.checkoutBranch('develop', { stdout: this.context.stdout, dryRun: this.dryRun })
+                await release.parentConfig.checkoutBranch(release.parentConfig.resolveDevelopBranchName(), { stdout: this.context.stdout, dryRun: this.dryRun })
                 await release.parentConfig.merge(release.branchName, { stdout: this.context.stdout, dryRun: this.dryRun }).catch(async () => {
                     this.context.stdout.write(Chalk.yellow(`Merge failed, aborting...\n`));
                     await release.parentConfig.abortMerge({ stdout: this.context.stdout, dryRun: this.dryRun });

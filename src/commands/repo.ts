@@ -29,6 +29,8 @@ export class InitCommand extends BaseCommand {
 
     parallelism = Option.String('--parallelism', { validator: Typanion.isNumber() });
 
+    target = Option.String('--target');
+
     // writeGitmodules = Option.Boolean('--write-gitmodules');
 
     static usage = Command.Usage({
@@ -47,7 +49,44 @@ export class InitCommand extends BaseCommand {
             configGroups.push(configGroup);
 
         for (const configGroup of configGroups)
-            await Bluebird.map(configGroup, config => config.init({ stdout: this.context.stdout, dryRun: this.dryRun, writeGitmdoulesConfig: true }), this.parallelism ? { concurrency: this.parallelism } : undefined);
+            await Bluebird.map(configGroup, async config => {
+                await config.init({ stdout: this.context.stdout, dryRun: this.dryRun, writeGitmdoulesConfig: true });
+
+                if (this.target) {
+                    if (!await config.hasElement(this.target))
+                        return;
+
+                    const fromElement = await config.parseElement(this.target);
+                    const fromBranch = await (async () => {
+                        if (fromElement.type === 'branch') {
+                            if (fromElement.branch === 'develop')
+                                return config.resolveDevelopBranchName();
+                            else if (fromElement.branch === 'master')
+                                return config.resolveMasterBranchName();
+                            else
+                                return fromElement.branch;
+                        }
+                        else if (fromElement.type === 'feature')
+                            return fromElement.feature.branchName;
+                        else if (fromElement.type === 'release')
+                            return fromElement.release.branchName;
+                        else if (fromElement.type === 'hotfix')
+                            return fromElement.hotfix.branchName;
+                        else if (fromElement.type === 'support') {
+                            if (fromElement.targetBranch === 'develop')
+                                return fromElement.support.developBranchName;
+                            else if (fromElement.targetBranch === 'master')
+                                return fromElement.support.masterBranchName;
+                            else
+                                return fromElement.support.developBranchName;
+                        }
+                        else
+                            throw new Error(`Cannot derive source branch from ${this.target}`);
+                    })();
+
+                    await config.checkoutBranch(fromBranch, { stdout: this.context.stdout, dryRun: this.dryRun });
+                }
+            }, this.parallelism ? { concurrency: this.parallelism } : undefined);
 
         // for (const config of targetConfigs)
         //     await config.init({ stdout: this.context.stdout, dryRun: this.dryRun });
@@ -81,21 +120,28 @@ export class CheckoutCommand extends BaseCommand {
 
             const fromElement = await config.parseElement(this.target);
             const fromBranch = await (async () => {
-                if (fromElement.type === 'branch')
-                    return fromElement.branch;
+                if (fromElement.type === 'branch') {
+                    if (fromElement.branch === 'develop')
+                        return config.resolveDevelopBranchName();
+                    else if (fromElement.branch === 'master')
+                        return config.resolveMasterBranchName();
+                    else
+                        return fromElement.branch;
+                }
                 else if (fromElement.type === 'feature')
                     return fromElement.feature.branchName;
                 else if (fromElement.type === 'release')
                     return fromElement.release.branchName;
                 else if (fromElement.type === 'hotfix')
                     return fromElement.hotfix.branchName;
-                else if (fromElement.type === 'support')
+                else if (fromElement.type === 'support') {
                     if (fromElement.targetBranch === 'develop')
                         return fromElement.support.developBranchName;
                     else if (fromElement.targetBranch === 'master')
                         return fromElement.support.masterBranchName;
                     else
                         return fromElement.support.developBranchName;
+                }
                 else
                     throw new Error(`Cannot derive source branch from ${this.target}`);
             })();
@@ -552,7 +598,7 @@ export class CloseCommand extends BaseCommand {
                             if (await config.isDirty({ stdout: this.context.stdout }))
                                 throw new Error(`Cannot merge, please commit all outstanding changes`);
 
-                            await config.checkoutBranch(element.feature.parentSupport?.developBranchName ?? 'develop', { stdout: this.context.stdout, dryRun: this.dryRun });
+                            await config.checkoutBranch(element.feature.parentSupport?.developBranchName ?? config.resolveDevelopBranchName(), { stdout: this.context.stdout, dryRun: this.dryRun });
                             if (await config.isDirty({ stdout: this.context.stdout }))
                                 throw new Error(`Cannot merge, develop has uncommited or staged changes`);
 
@@ -571,7 +617,7 @@ export class CloseCommand extends BaseCommand {
                         }
                     }
 
-                    await config.checkoutBranch(element.feature.parentSupport?.developBranchName ?? 'develop', { stdout: this.context.stdout, dryRun: this.dryRun });
+                    await config.checkoutBranch(element.feature.parentSupport?.developBranchName ?? config.resolveDevelopBranchName(), { stdout: this.context.stdout, dryRun: this.dryRun });
                     await config.deleteBranch(element.feature.branchName, { stdout: this.context.stdout, dryRun: this.dryRun });
 
                     await (element.feature.parentSupport ?? element.feature.parentConfig).deleteFeature(element.feature)
@@ -590,7 +636,7 @@ export class CloseCommand extends BaseCommand {
                             if (await config.isDirty({ stdout: this.context.stdout }))
                                 throw new Error(`Cannot merge, please commit all outstanding changes`);
 
-                            await config.checkoutBranch(element.release.parentSupport?.developBranchName ?? 'develop', { stdout: this.context.stdout, dryRun: this.dryRun });
+                            await config.checkoutBranch(element.release.parentSupport?.developBranchName ?? config.resolveDevelopBranchName(), { stdout: this.context.stdout, dryRun: this.dryRun });
                             if (await config.isDirty({ stdout: this.context.stdout }))
                                 throw new Error(`Cannot merge, develop has uncommited or staged changes`);
 
@@ -609,7 +655,7 @@ export class CloseCommand extends BaseCommand {
                         }
 
                         if (!await config.getStateValue([ `${element.release.uri}/closing`, 'master' ], 'boolean')) {
-                            await config.checkoutBranch(element.release.parentSupport?.masterBranchName ?? 'master', { stdout: this.context.stdout, dryRun: this.dryRun });
+                            await config.checkoutBranch(element.release.parentSupport?.masterBranchName ?? config.resolveMasterBranchName(), { stdout: this.context.stdout, dryRun: this.dryRun });
                             if (await config.isDirty({ stdout: this.context.stdout }))
                                 throw new Error(`Cannot merge, master has uncommited or staged changes`);
     
@@ -630,7 +676,7 @@ export class CloseCommand extends BaseCommand {
                         }
                     }
 
-                    await config.checkoutBranch(element.release.parentSupport?.developBranchName ?? 'develop', { stdout: this.context.stdout, dryRun: this.dryRun });
+                    await config.checkoutBranch(element.release.parentSupport?.developBranchName ?? config.resolveDevelopBranchName(), { stdout: this.context.stdout, dryRun: this.dryRun });
                     await config.deleteBranch(element.release.branchName, { stdout: this.context.stdout, dryRun: this.dryRun });
 
                     await (element.release.parentSupport ?? element.release.parentConfig).deleteRelease(element.release);
@@ -649,7 +695,7 @@ export class CloseCommand extends BaseCommand {
                             throw new Error(`Cannot merge, please commit all outstanding changes`);
 
                         if (!await config.getStateValue([ `${element.hotfix.uri}/closing`, 'master' ], 'boolean')) {
-                            await config.checkoutBranch(element.hotfix.parentSupport?.masterBranchName ?? 'master', { stdout: this.context.stdout, dryRun: this.dryRun });
+                            await config.checkoutBranch(element.hotfix.parentSupport?.masterBranchName ?? config.resolveMasterBranchName(), { stdout: this.context.stdout, dryRun: this.dryRun });
                             if (await config.isDirty({ stdout: this.context.stdout }))
                                 throw new Error(`Cannot merge, master has uncommited or staged changes`);
 
@@ -670,7 +716,7 @@ export class CloseCommand extends BaseCommand {
                         }
 
                         if (!await config.getStateValue([ `${element.hotfix.uri}/closing`, 'develop' ], 'boolean')) {
-                            await config.checkoutBranch(element.hotfix.parentSupport?.developBranchName ?? 'develop', { stdout: this.context.stdout, dryRun: this.dryRun });
+                            await config.checkoutBranch(element.hotfix.parentSupport?.developBranchName ?? config.resolveDevelopBranchName(), { stdout: this.context.stdout, dryRun: this.dryRun });
                             if (await config.isDirty({ stdout: this.context.stdout }))
                                 throw new Error(`Cannot merge, develop has uncommited or staged changes`);
     
@@ -689,7 +735,7 @@ export class CloseCommand extends BaseCommand {
                         }
                     }
 
-                    await config.checkoutBranch(element.hotfix.parentSupport?.developBranchName ?? 'develop', { stdout: this.context.stdout, dryRun: this.dryRun });
+                    await config.checkoutBranch(element.hotfix.parentSupport?.developBranchName ?? config.resolveDevelopBranchName(), { stdout: this.context.stdout, dryRun: this.dryRun });
                     await config.deleteBranch(element.hotfix.branchName, { stdout: this.context.stdout, dryRun: this.dryRun });
 
                     await (element.hotfix.parentSupport ?? element.hotfix.parentConfig).deleteHotfix(element.hotfix);
@@ -730,8 +776,8 @@ export class ListCommand extends BaseCommand {
         });
 
         const targets = await Bluebird.map(targetConfigs, async config => {
-            const masterStatus = await config.resolveBranchStatus('master', 'origin', { stdout: this.context.stdout, dryRun: this.dryRun });
-            const developStatus = await config.resolveBranchStatus('develop', 'origin', { stdout: this.context.stdout, dryRun: this.dryRun });
+            const masterStatus = await config.resolveBranchStatus(config.resolveMasterBranchName(), 'origin', { stdout: this.context.stdout, dryRun: this.dryRun });
+            const developStatus = await config.resolveBranchStatus(config.resolveDevelopBranchName(), 'origin', { stdout: this.context.stdout, dryRun: this.dryRun });
 
             return {
                 config,

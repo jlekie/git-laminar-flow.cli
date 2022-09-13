@@ -526,7 +526,7 @@ export interface BranchStatus {
     commitsBehind: number;
 }
 
-export type ConfigParams = Pick<Config, 'identifier' | 'upstreams' | 'submodules' | 'features' | 'releases' | 'hotfixes' | 'supports' | 'included' | 'excluded'> & Partial<Pick<Config, 'featureMessageTemplate' | 'releaseMessageTemplate' | 'hotfixMessageTemplate' | 'releaseTagTemplate' | 'hotfixTagTemplate' | 'isNew' | 'managed' | 'version' | 'tags' | 'integrations' | 'commitMessageTemplates' | 'tagTemplates'>>;
+export type ConfigParams = Pick<Config, 'identifier' | 'upstreams' | 'submodules' | 'features' | 'releases' | 'hotfixes' | 'supports' | 'included' | 'excluded'> & Partial<Pick<Config, 'featureMessageTemplate' | 'releaseMessageTemplate' | 'hotfixMessageTemplate' | 'releaseTagTemplate' | 'hotfixTagTemplate' | 'isNew' | 'managed' | 'version' | 'tags' | 'integrations' | 'commitMessageTemplates' | 'tagTemplates' | 'masterBranchName' | 'developBranchName'>>;
 export class Config {
     public identifier: string;
     public managed: boolean;
@@ -548,6 +548,8 @@ export class Config {
     public integrations: Integration[];
     public commitMessageTemplates: MessageTemplate[];
     public tagTemplates: TagTemplate[];
+    public masterBranchName?: string;
+    public developBranchName?: string;
 
     public readonly isNew: boolean;
 
@@ -680,6 +682,9 @@ export class Config {
 
         this.commitMessageTemplates = params.commitMessageTemplates ?? [];
         this.tagTemplates = params.tagTemplates ?? [];
+
+        this.masterBranchName = params.masterBranchName;
+        this.developBranchName = params.developBranchName;
     }
 
     // Register internals (initialize)
@@ -768,10 +773,10 @@ export class Config {
         return this.resolveArtifactFromBranch(currentBranch);
     }
     public async resolveArtifactFromBranch(branchName: string): Promise<Artifact> {
-        if (branchName === 'master') {
+        if (branchName === this.resolveMasterBranchName()) {
             return { type: 'master', branch: branchName };
         }
-        else if (branchName === 'develop') {
+        else if (branchName === this.resolveDevelopBranchName()) {
             return { type: 'develop', branch: branchName };
         }
         else {
@@ -1058,7 +1063,7 @@ export class Config {
                         await exec(`git remote add ${originUpstream.name} ${originUpstream.url}`, { cwd: this.path, stdout, dryRun });
                         await exec(`git fetch`, { cwd: this.path, stdout, dryRun });
 
-                        if (!await this.remoteBranchExists('master', originUpstream.name, { stdout, dryRun })) {
+                        if (!await this.remoteBranchExists(this.resolveMasterBranchName(), originUpstream.name, { stdout, dryRun })) {
                             await exec(`git commit --allow-empty -m "initial commit (GLFCID: ${this.identifier})"`, { cwd: this.path, stdout, dryRun });
                         }
                     }
@@ -1092,16 +1097,16 @@ export class Config {
             }
 
             // Create master branch if missing
-            if (!await this.branchExists('master', { stdout, dryRun })) {
-                if (await this.remoteBranchExists('master', 'origin', { stdout, dryRun })) {
+            if (!await this.branchExists(this.resolveMasterBranchName(), { stdout, dryRun })) {
+                if (await this.remoteBranchExists(this.resolveMasterBranchName(), 'origin', { stdout, dryRun })) {
                     const currentBranch = await this.resolveCurrentBranch({ stdout, dryRun }).catch(() => undefined);
-                    await exec(`git checkout -b master --track origin/master`, { cwd: this.path, stdout, dryRun });
+                    await exec(`git checkout -b ${this.resolveMasterBranchName()} --track origin/${this.resolveMasterBranchName()}`, { cwd: this.path, stdout, dryRun });
                     currentBranch && await this.checkoutBranch(currentBranch, { stdout, dryRun });
                 }
                 else {
                     // const initialSha = await this.execCmd('git rev-list --max-parents=0 HEAD', { stdout, dryRun });
                     const initialSha = await this.execCmd('git rev-parse HEAD', { stdout, dryRun });
-                    await this.createBranch('master', { source: initialSha, stdout, dryRun });
+                    await this.createBranch(this.resolveMasterBranchName(), { source: initialSha, stdout, dryRun });
                 }
             }
             // else if (await this.remoteBranchExists('master', 'origin', { stdout, dryRun }) && !(await this.resolveBranchUpstream('master', { stdout, dryRun }))) {
@@ -1113,8 +1118,8 @@ export class Config {
             // }
 
             // Create develop branch if missing
-            if (!await this.branchExists('develop', { stdout, dryRun })) {
-                if (await this.remoteBranchExists('develop', 'origin', { stdout, dryRun })) {
+            if (!await this.branchExists(this.resolveDevelopBranchName(), { stdout, dryRun })) {
+                if (await this.remoteBranchExists(this.resolveDevelopBranchName(), 'origin', { stdout, dryRun })) {
                     const currentBranch = await this.resolveCurrentBranch({ stdout, dryRun }).catch(() => undefined);
                     await exec(`git checkout -b develop --track origin/develop`, { cwd: this.path, stdout, dryRun });
                     currentBranch && await this.checkoutBranch(currentBranch, { stdout, dryRun });
@@ -1122,10 +1127,10 @@ export class Config {
                 else {
                     // const initialSha = await this.execCmd('git rev-list --max-parents=0 HEAD', { stdout, dryRun });
                     const initialSha = await this.execCmd('git rev-parse HEAD', { stdout, dryRun });
-                    await this.createBranch('develop', { source: initialSha, stdout, dryRun });
+                    await this.createBranch(this.resolveDevelopBranchName(), { source: initialSha, stdout, dryRun });
                 }
 
-                await this.checkoutBranch('develop', { stdout, dryRun });
+                await this.checkoutBranch(this.resolveDevelopBranchName(), { stdout, dryRun });
             }
             // else if (await this.remoteBranchExists('develop', 'origin', { stdout, dryRun }) && !(await this.resolveBranchUpstream('develop', { stdout, dryRun }))) {
             //     const currentBranch = await this.resolveCurrentBranch({ stdout, dryRun });
@@ -1720,6 +1725,13 @@ export class Config {
             tagTemplates.push(...this.parentConfig.flattenTagTemplates().filter(t => !tagTemplates.some(tt => t.name === tt.name)));
 
         return tagTemplates;
+    }
+
+    public resolveMasterBranchName() {
+        return this.masterBranchName ?? 'master';
+    }
+    public resolveDevelopBranchName() {
+        return this.developBranchName ?? 'develop';
     }
 }
 
