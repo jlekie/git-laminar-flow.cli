@@ -29,8 +29,14 @@ export type ActionParamResults<T> = {
 async function resolveFromArtifacts(config: Config, from: string) {
     const fromElement = await config.parseElement(from);
     const fromBranch = await (async () => {
-        if (fromElement.type === 'branch')
-            return fromElement.branch;
+        if (fromElement.type === 'branch')  {
+            if (fromElement.branch === 'master')
+                return config.resolveMasterBranchName();
+            else if (fromElement.branch === 'develop')
+                return config.resolveDevelopBranchName();
+            else
+                return fromElement.branch;
+        }
         else if (fromElement.type === 'repo')
             return fromElement.config.resolveCurrentBranch();
         else if (fromElement.type === 'feature')

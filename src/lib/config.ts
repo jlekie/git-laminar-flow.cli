@@ -25,7 +25,7 @@ import {
     parseConfigReference
 } from '@jlekie/git-laminar-flow';
 
-import { exec, execCmd, ExecOptions } from './exec';
+import { exec, execCmd, ExecOptions, execRaw } from './exec';
 import { Settings } from './settings';
 import { loadPlugin } from './plugin';
 import { parseStatus } from './porcelain';
@@ -1407,6 +1407,9 @@ export class Config {
     }
     public async execCmd(cmd: string, { stdout, dryRun, echo, trim }: ExecParams & { trim?: boolean } = {}) {
         return await execCmd(cmd, { cwd: this.path, stdout, dryRun, echo, trim });
+    }
+    public async execRaw(cmd: string, { stdout, dryRun, echo }: ExecParams = {}) {
+        return await execRaw(cmd, { cwd: this.path, stdout, dryRun, echo });
     }
 
     public async fetch({ stdout, dryRun }: ExecParams = {}) {

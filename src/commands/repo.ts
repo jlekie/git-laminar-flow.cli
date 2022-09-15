@@ -263,7 +263,7 @@ export class ExecCommand extends BaseInteractiveCommand {
             message: 'Command'
         });
 
-        await Bluebird.map(configs, config => config.exec(cmd, { stdout: this.context.stdout, dryRun: this.dryRun }).then(() => {
+        await Bluebird.map(configs, config => config.execRaw(cmd, { stdout: this.context.stdout, dryRun: this.dryRun }).then(() => {
             this.context.stdout.write(`[${Chalk.magenta(config.pathspec)}] ${Chalk.cyan(cmd)} ${Chalk.green('Complete')}\n`);
         }).catch(err => {
             this.context.stdout.write(`[${Chalk.magenta(config.pathspec)}] ${Chalk.cyan(cmd)} ${Chalk.red('Failed')} <${Chalk.red(err)}>\n`);

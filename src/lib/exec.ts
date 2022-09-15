@@ -58,6 +58,24 @@ export async function execCmd(cmd: string, { cwd, stdout, dryRun, echo = true, t
         throw new Error(`Shell exec failed: ${err}`);
     });
 }
+export async function execRaw(cmd: string, { cwd, stdout, dryRun, echo = true }: ExecOptions = {}) {
+    echo && stdout?.write(Chalk.gray(`${Chalk.cyan.bold(cmd)} [${Path.resolve(cwd ?? '.')}]\n`));
+
+    if (dryRun)
+        return;
+
+    const env = cmd.startsWith('yarn')
+        ? _.omit(process.env, 'NODE_OPTIONS', 'INIT_CWD' , 'PROJECT_CWD', 'PWD', 'npm_package_name', 'npm_package_version', 'npm_config_user_agent', 'npm_execpath', 'npm_node_execpath', 'BERRY_BIN_FOLDER')
+        : process.env;
+    const proc = ChildProcess.spawn(cmd, { stdio: 'inherit', shell: true, cwd, env });
+
+    return new Promise<void>((resolve, reject) => {
+        proc.on('close', (code) => code !== 0 ? reject(new Error(`${cmd} <${Path.resolve(cwd ?? '.')}> Exited with code ${code}`)) : resolve());
+        proc.on('error', (err) => reject(err));
+    }).catch(err => {
+        throw new Error(`Shell exec failed: ${err}`);
+    });
+}
 
 export async function prompt(query: string, { cwd, stdin, stdout }: InputOptions) {
     const rl = Readline.createInterface({
