@@ -1297,7 +1297,7 @@ export async function setVersion(rootConfig: Config, { stdout, dryRun, ...params
     const allConfigs = rootConfig.flattenConfigs().filter(c => c.managed);
     const configs = await params.configs({ configs: allConfigs });
 
-    await Bluebird.map(Bluebird.mapSeries(configs, async config => {
+    await Bluebird.mapSeries(Bluebird.mapSeries(configs, async config => {
         return {
             config,
             version: await params.version({ config })
@@ -1325,7 +1325,7 @@ export async function stampVersion(rootConfig: Config, { stdout, dryRun, ...para
     const allConfigs = rootConfig.flattenConfigs().filter(c => c.managed);
     const configs = await params.configs({ configs: allConfigs });
 
-    await Bluebird.map(Bluebird.mapSeries(configs, async config => {
+    await Bluebird.mapSeries(Bluebird.mapSeries(configs, async config => {
         return {
             config
         };
@@ -1357,7 +1357,7 @@ export async function incrementVersion(rootConfig: Config, { stdout, dryRun, ...
         }
     })();
 
-    await Bluebird.map(Bluebird.mapSeries(configs, async config => {
+    await Bluebird.mapSeries(Bluebird.mapSeries(configs, async config => {
         return {
             config
         };
