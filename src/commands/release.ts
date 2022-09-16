@@ -62,10 +62,11 @@ export class CreateInteractiveCommand extends BaseInteractiveCommand {
             }), {
                 defaultValue: targetConfigs.map(c => c.identifier)
             }),
-            checkout: ({ config }) => this.createOverridablePrompt('checkout', value => Zod.boolean().parse(value), {
+            checkout: ({ config }) => this.createOverridablePrompt('checkout', value => Zod.boolean().parse(value), (initial) => ({
                 type: 'confirm',
                 message: `[${Chalk.magenta(config.pathspec)}] Checkout`,
-            }, {
+                initial
+            }), {
                 pathspecPrefix: config.pathspec,
                 defaultValue: true
             }),
@@ -307,7 +308,7 @@ export class CloseInteractiveCommand extends BaseInteractiveCommand {
                 choices: templates.map(t => ({ title: t.name, value: t.name, selected: initial?.some(tt => tt === t.name) }))
             }), {
                 answerType: OverridablePromptAnswerTypes.StringArray,
-                defaultValue: [ templates[0].name ]
+                defaultValue: []
             }),
             commitMessage: ({ config, messages }) => this.createOverridablePrompt('commitMessage', value => Zod.string().transform(name => messages.find(t => t.name === name)).parse(value), initial => ({
                 type: 'select',
