@@ -760,7 +760,7 @@ export class Config {
 
         const included = params.included ?? rootConfig.included;
         const excluded = params.excluded ?? rootConfig.excluded;
-        if (((!included || !included.length) || await Bluebird.any(included.map(uri => matchAll(uri.split(';'))))) && ((!excluded || !excluded.length) || !await Bluebird.any(excluded.map(uri => matchAll(uri.split(';'))))))
+        if (((!included || !included.length) || _.some(await Bluebird.map(included, uri => matchAll(uri.split(';'))))) && ((!excluded || !excluded.length) || !_.some(await Bluebird.map(excluded, uri => matchAll(uri.split(';'))))))
             configs.push(this);
 
         for (const submodule of this.submodules)
