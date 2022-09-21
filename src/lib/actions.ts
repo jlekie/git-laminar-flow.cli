@@ -656,7 +656,8 @@ export async function closeRelease(rootConfig: Config, { stdout, dryRun, ...para
 
                 try {
                     if (!await config.getStateValue([ release.stateKey, 'closing', 'develop' ], 'boolean')) {
-                        await config.swapCheckoutTree(config => config.releases.find(r => r.name === release.name && r.parentSupport?.name === release.parentSupport?.name)?.parentSupport?.developBranchName ?? config.resolveDevelopBranchName(), async () => {
+                        // await config.swapCheckoutTree(config => config.releases.find(r => r.name === release.name && r.parentSupport?.name === release.parentSupport?.name)?.parentSupport?.developBranchName ?? config.resolveDevelopBranchName(), async () => {
+                        await config.swapCheckout(release.parentSupport?.developBranchName ?? release.parentConfig.resolveDevelopBranchName(), async () => {
                             await config.merge(release.branchName, { stdout, dryRun });
 
                             // await config.stage(await Bluebird.filter(config.resolveStatuses({ stdout, dryRun }), s => !!s.isSubmodule).map(s => s.path), { stdout, dryRun });
@@ -699,7 +700,8 @@ export async function closeRelease(rootConfig: Config, { stdout, dryRun, ...para
                             version: release.parentConfig.resolveVersion()
                         };
 
-                        await config.swapCheckoutTree(config => config.releases.find(r => r.name === release.name && r.parentSupport?.name === release.parentSupport?.name)?.parentSupport?.masterBranchName ?? config.resolveMasterBranchName(), async () => {
+                        // await config.swapCheckoutTree(config => config.releases.find(r => r.name === release.name && r.parentSupport?.name === release.parentSupport?.name)?.parentSupport?.masterBranchName ?? config.resolveMasterBranchName(), async () => {
+                        await config.swapCheckout(release.parentSupport?.masterBranchName ?? release.parentConfig.resolveMasterBranchName(), async () => {
                             await config.merge(release.branchName, { stdout, dryRun });
 
                             // await config.stage(await Bluebird.filter(config.resolveStatuses({ stdout, dryRun }), s => !!s.isSubmodule).map(s => s.path), { stdout, dryRun });
