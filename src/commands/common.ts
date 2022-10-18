@@ -51,10 +51,18 @@ export const AnswersSchema = Zod.string()
     .array();
 
 export abstract class BaseCommand extends Command {
-    cwd = Option.String('--cwd');
-    dryRun = Option.Boolean('--dry-run');
-    configPath = Option.String('--config');
-    settingsPath = Option.String('--settings', Path.resolve(OS.homedir(), '.glf/cli.yml'));
+    cwd = Option.String('--cwd', {
+        description: 'The working directory'
+    });
+    dryRun = Option.Boolean('--dry-run', {
+        description: 'Simulate actions only'
+    });
+    configPath = Option.String('--config', {
+        description: 'Path to GLF config'
+    });
+    settingsPath = Option.String('--settings', Path.resolve(OS.homedir(), '.glf/cli.yml'), {
+        description: 'Path to settings config'
+    });
 
     public async execute() {
         return this.executeCommand().catch(err => {
@@ -168,17 +176,25 @@ export abstract class BaseCommand extends Command {
 
 export abstract class BaseInteractiveCommand extends BaseCommand {
     rawAnswers = Option.Array('-a,--answer', []);
+
     defaultAll = Option.Boolean('--default-all');
+    // nonInteractive = Option.Boolean('--non-interactive');
+
+    interaction = Option.Counter('-i,--interaction', {
+        description: 'Interaction Level (use --no-interaction for unattended)'
+    });
 
     #answers = new Lazy(() => AnswersSchema.parse(this.rawAnswers))
     public get answers() {
         return this.#answers.value;
     }
 
-    protected async createOverridablePrompt<T, D = Prompts.InitialReturnValue>(name: string, parser: (value: unknown) => T, prompt: Omit<Prompts.PromptObject<"from">, "name"> | ((defaultValue?: D) => Omit<Prompts.PromptObject<"from">, "name">), { answers = [], pathspecPrefix, defaultValue, answerType }: Partial<{ answers: { pattern: string, value: string }[], pathspecPrefix: string, defaultValue: D, answerType: OverridablePromptAnswerTypes }> = {}): Promise<T> {
+    protected async createOverridablePrompt<T, D = Prompts.InitialReturnValue>(name: string, parser: (value: unknown) => T, prompt: Omit<Prompts.PromptObject<"from">, "name"> | ((defaultValue?: D) => Omit<Prompts.PromptObject<"from">, "name">), { answers = [], pathspecPrefix, defaultValue, answerType, interactivity = 1 }: Partial<{ answers: { pattern: string, value: string }[], pathspecPrefix: string, defaultValue: D, answerType: OverridablePromptAnswerTypes, interactivity?: number }> = {}): Promise<T> {
+        const interactionLevel = this.interaction ?? 1;
+
         const allAnswers = _.reverse([ ...this.answers, ...answers ]);
-        if (this.defaultAll)
-            allAnswers.push({ pattern: '**', value: '<DEFAULT>' });
+        // if (this.defaultAll)
+        allAnswers.push({ pattern: '**', value: '<DEFAULT>' });
 
         const findAnswerValue = (pathspec: string) => {
             const answer = allAnswers.find(a => Minimatch(pathspec, a.pattern));
@@ -209,18 +225,22 @@ export abstract class BaseInteractiveCommand extends BaseCommand {
             })();
 
             if (value !== undefined)
-                this.context.stdout.write(Chalk.gray(`Using matching answer value "${value}" for ${pathspec}\n`));
+                this.context.stdout.write(Chalk.gray(`Using matching answer value "${value}" for ${pathspec} [I:${interactivity}]\n`));
 
             return value;
         }
 
         const rawValue = await (() => {
             const answerValue = findAnswerValue(pathspecPrefix ? `${pathspecPrefix}/${name}` : name);
-            if (answerValue !== undefined) {
+
+            if (!this.defaultAll && process.stdin.isTTY && interactionLevel >= interactivity) {
+                return this.prompt(name, _.isFunction(prompt) ? prompt(defaultValue ?? undefined) : prompt);
+            }
+            else if (answerValue !== undefined) {
                 return answerValue;
             }
             else {
-                return this.prompt(name, _.isFunction(prompt) ? prompt(defaultValue ?? undefined) : prompt);
+                throw new Error(`No value defined for input '${pathspecPrefix ? `${pathspecPrefix}/${name}` : name}' [I:${interactivity}]`)
             }
         })();
 

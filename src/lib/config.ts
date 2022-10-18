@@ -22,7 +22,7 @@ import { StringDecoder } from 'string_decoder';
 import {
     ConfigSchema, ConfigSubmoduleSchema, ConfigFeatureSchema, ConfigReleaseSchema, ConfigHotfixSchema, ConfigSupportSchema, ConfigUriSchema, ElementSchema, RecursiveConfigSchema, RecursiveConfigSubmoduleSchema, ConfigIntegrationSchema, ConfigTaggingSchema, ConfigMessageTemplate, ConfigTagTemplate,
     ConfigBase, SubmoduleBase, FeatureBase, ReleaseBase, HotfixBase, SupportBase, IntegrationBase, TaggingBase, MessageTemplateBase, TagTemplateBase,
-    parseConfigReference
+    parseConfigReference, resolveApiVersion
 } from '@jlekie/git-laminar-flow';
 
 import { exec, execCmd, ExecOptions, execRaw } from './exec';
@@ -367,14 +367,20 @@ export async function loadV2Config(uri: string, settings: Settings, { cwd, paren
                 auth: glfsRepo.apiKey ? {
                     username: 'glf.cli',
                     password: glfsRepo.apiKey
-                } : undefined
+                } : undefined,
+                headers: {
+                    'glf-api-version': resolveApiVersion()
+                }
             })
                 .then(response => Config.parse(response.data))
                 .catch(err => {
                     if (Axios.isAxiosError(err) && err.response?.status === 404)
                         return Config.createNew();
 
-                    throw new Error(`Failed to fetch http(s) config [${err}]`);
+                    if (Axios.isAxiosError(err))
+                        throw new Error(`Failed to fetch http(s) config [${err.response?.data.message ?? err}]`);
+                    else
+                        throw new Error(`Failed to fetch http(s) config [${err}]`);
                 });
         }
         else {
@@ -385,6 +391,10 @@ export async function loadV2Config(uri: string, settings: Settings, { cwd, paren
     await config.register(cwd, uri, config.calculateHash(), settings, {
         verify
     }, parentConfig, parentSubmodule, pathspecPrefix);
+
+    config.features.push(...await config.loadShadowFeatures());
+    config.releases.push(...await config.loadShadowReleases());
+    config.hotfixes.push(...await config.loadShadowHotfixes());
 
     verify && await config.verify({ stdout, dryRun });
 
@@ -526,7 +536,7 @@ export interface BranchStatus {
     commitsBehind: number;
 }
 
-export type ConfigParams = Pick<Config, 'identifier' | 'upstreams' | 'submodules' | 'features' | 'releases' | 'hotfixes' | 'supports' | 'included' | 'excluded'> & Partial<Pick<Config, 'featureMessageTemplate' | 'releaseMessageTemplate' | 'hotfixMessageTemplate' | 'releaseTagTemplate' | 'hotfixTagTemplate' | 'isNew' | 'managed' | 'version' | 'tags' | 'integrations' | 'commitMessageTemplates' | 'tagTemplates' | 'masterBranchName' | 'developBranchName'>>;
+export type ConfigParams = Pick<Config, 'identifier' | 'upstreams' | 'submodules' | 'features' | 'releases' | 'hotfixes' | 'supports' | 'included' | 'excluded'> & Partial<Pick<Config, 'featureMessageTemplate' | 'releaseMessageTemplate' | 'hotfixMessageTemplate' | 'releaseTagTemplate' | 'hotfixTagTemplate' | 'isNew' | 'managed' | 'version' | 'tags' | 'integrations' | 'commitMessageTemplates' | 'tagTemplates' | 'masterBranchName' | 'developBranchName' | 'dependencies'>>;
 export class Config {
     public identifier: string;
     public managed: boolean;
@@ -550,6 +560,7 @@ export class Config {
     public tagTemplates: TagTemplate[];
     public masterBranchName?: string;
     public developBranchName?: string;
+    public dependencies: string[];
 
     public readonly isNew: boolean;
 
@@ -685,6 +696,8 @@ export class Config {
 
         this.masterBranchName = params.masterBranchName;
         this.developBranchName = params.developBranchName;
+
+        this.dependencies = params.dependencies ?? [];
     }
 
     // Register internals (initialize)
@@ -1326,7 +1339,7 @@ export class Config {
         const configRef = parseConfigReference(this.sourceUri);
         if (configRef.type === 'file') {
             if (!dryRun) {
-                const content = Yaml.dump(this);
+                const content = Yaml.dump(this.toHash());
                 await FS.writeFile(configRef.path, content, 'utf8');
             }
             stdout?.write(Chalk.gray(`Config written to ${configRef.path}\n`));
@@ -1341,7 +1354,7 @@ export class Config {
 
                 const configPath = Path.join(this.path, '.gitflow.yml');
                 if (!dryRun)
-                    await FS.writeFile(configPath, Yaml.dump(this), 'utf8');
+                    await FS.writeFile(configPath, Yaml.dump(this.toHash()), 'utf8');
                 stdout?.write(Chalk.gray(`Config written to ${configPath}\n`));
 
                 await exec('git add -f .gitflow.yml', { cwd: this.path, stdout, dryRun });
@@ -1377,17 +1390,44 @@ export class Config {
             if (!dryRun) {
                 await Axios.put(`${glfsRepo.url}/v1/${glfsRepo.name}/${configRef.namespace}/${configRef.name}`, this.toHash(), {
                     headers: {
+                        'glf-api-version': resolveApiVersion(),
                         'if-match': this.baseHash
                     },
                     auth: glfsRepo.apiKey ? {
                         username: 'glf.cli',
                         password: glfsRepo.apiKey
                     } : undefined
+                })
+                .catch(err => {
+                    if (Axios.isAxiosError(err))
+                        throw new Error(`Failed to fetch http(s) config [${err.response?.data.message ?? err}]`);
+                    else
+                        throw new Error(`Failed to fetch http(s) config [${err}]`);
                 });
             }
         }
         else {
             throw new Error(`Unsupported config type ${configRef.type}`);
+        }
+
+        if (!dryRun) {
+            await FS.emptyDir(Path.join(this.path, '.glf', 'shadow-features'));
+            for (const feature of this.features.filter(f => f.shadow)) {
+                const featurePath = Path.join(this.path, '.glf', 'shadow-features', `${feature.name}.json`);
+                await FS.outputJson(featurePath, feature.toHash(), 'utf8');
+            }
+
+            await FS.emptyDir(Path.join(this.path, '.glf', 'shadow-releases'));
+            for (const release of this.releases.filter(f => f.shadow)) {
+                const releasePath = Path.join(this.path, '.glf', 'shadow-releases', `${release.name}.json`);
+                await FS.outputJson(releasePath, release.toHash(), 'utf8');
+            }
+
+            await FS.emptyDir(Path.join(this.path, '.glf', 'shadow-hotfixes'));
+            for (const hotfix of this.hotfixes.filter(f => f.shadow)) {
+                const hotfixPath = Path.join(this.path, '.glf', 'shadow-hotfixes', `${hotfix.name}.json`);
+                await FS.outputJson(hotfixPath, hotfix.toHash(), 'utf8');
+            }
         }
     }
 
@@ -1711,6 +1751,11 @@ export class Config {
         else {
             delete this.version;
         }
+
+        return _(this.dependencies)
+            .map(id => this.parentConfig?.submodules.find(s => s.config.identifier === id)?.config)
+            .compact()
+            .value()
     }
 
     public flattenCommitMessageTemplates() {
@@ -1735,6 +1780,49 @@ export class Config {
     }
     public resolveDevelopBranchName() {
         return this.developBranchName ?? 'develop';
+    }
+
+    public async loadShadowFeatures() {
+        const featuresPath = Path.join(this.path, '.glf', 'shadow-features');
+        if (!await FS.pathExists(featuresPath))
+            return [];
+
+        return Bluebird.map(FS.readdir(featuresPath), file => 
+            FS.readFile(Path.join(featuresPath, file), 'utf8')
+                .then(content => JSON.parse(content))
+                .then(hash => Feature.parse(hash, true))
+                .then(async feature => {
+                    await feature.register(this);
+                    return feature;
+                }));
+    }
+    public async loadShadowReleases() {
+        const releasesPath = Path.join(this.path, '.glf', 'shadow-releases');
+        if (!await FS.pathExists(releasesPath))
+            return [];
+
+        return Bluebird.map(FS.readdir(releasesPath), file => 
+            FS.readFile(Path.join(releasesPath, file), 'utf8')
+                .then(content => JSON.parse(content))
+                .then(hash => Release.parse(hash, true))
+                .then(async release => {
+                    await release.register(this);
+                    return release;
+                }));
+    }
+    public async loadShadowHotfixes() {
+        const hotfixesPath = Path.join(this.path, '.glf', 'shadow-hotfixes');
+        if (!await FS.pathExists(hotfixesPath))
+            return [];
+
+        return Bluebird.map(FS.readdir(hotfixesPath), file => 
+            FS.readFile(Path.join(hotfixesPath, file), 'utf8')
+                .then(content => JSON.parse(content))
+                .then(hash => Hotfix.parse(hash, true))
+                .then(async hotfix => {
+                    await hotfix.register(this);
+                    return hotfix;
+                }));
     }
 }
 
@@ -1854,6 +1942,8 @@ export class Feature {
     public upstream?: string;
     public tags: Tagging[];
 
+    public readonly shadow: boolean;
+
     #initialized: boolean = false;
 
     #parentConfig!: Config;
@@ -1879,22 +1969,24 @@ export class Feature {
         return `feature/${this.parentSupport ? `${this.parentSupport.name}/` : ''}${this.name}`;
     }
 
-    public static parse(value: unknown) {
-        return this.fromSchema(ConfigFeatureSchema.parse(value));
+    public static parse(value: unknown, shadow?: boolean) {
+        return this.fromSchema(ConfigFeatureSchema.parse(value), shadow);
     }
-    public static fromSchema(value: Zod.infer<typeof ConfigFeatureSchema>) {
+    public static fromSchema(value: Zod.infer<typeof ConfigFeatureSchema>, shadow?: boolean) {
         return new this({
             ...value,
             tags: value.tags?.map(t => Tagging.fromSchema(t))
-        });
+        }, shadow);
     }
 
-    public constructor(params: FeatureParams) {
+    public constructor(params: FeatureParams, shadow?: boolean) {
         this.name = params.name;
         this.branchName = params.branchName;
         this.sourceSha = params.sourceSha;
         this.upstream = params.upstream;
         this.tags = params.tags ?? [];
+
+        this.shadow = shadow ?? false;
     }
 
     public async register(parentConfig: Config, parentSupport?: Support) {
@@ -1952,6 +2044,8 @@ export class Release {
     public intermediate: boolean;
     public tags: Tagging[];
 
+    public readonly shadow: boolean;
+
     #initialized: boolean = false;
 
     #parentConfig!: Config;
@@ -1977,23 +2071,25 @@ export class Release {
         return `release/${this.parentSupport ? `${this.parentSupport.name}/` : ''}${this.name}`;
     }
 
-    public static parse(value: unknown) {
-        return this.fromSchema(ConfigReleaseSchema.parse(value));
+    public static parse(value: unknown, shadow?: boolean) {
+        return this.fromSchema(ConfigReleaseSchema.parse(value), shadow);
     }
-    public static fromSchema(value: Zod.infer<typeof ConfigReleaseSchema>) {
+    public static fromSchema(value: Zod.infer<typeof ConfigReleaseSchema>, shadow?: boolean) {
         return new this({
             ...value,
             tags: value.tags?.map(t => Tagging.fromSchema(t))
-        });
+        }, shadow);
     }
 
-    public constructor(params: ReleaseParams) {
+    public constructor(params: ReleaseParams, shadow?: boolean) {
         this.name = params.name;
         this.branchName = params.branchName;
         this.sourceSha = params.sourceSha;
         this.upstream = params.upstream;
         this.intermediate = params.intermediate ?? false;
         this.tags = params.tags ??[];
+
+        this.shadow = shadow ?? false;
     }
 
     public async register(parentConfig: Config, parentSupport?: Support) {
@@ -2053,6 +2149,8 @@ export class Hotfix {
     public intermediate: boolean;
     public tags: Tagging[];
 
+    public readonly shadow: boolean;
+
     #initialized: boolean = false;
 
     #parentConfig!: Config;
@@ -2078,23 +2176,25 @@ export class Hotfix {
         return `hotfix/${this.parentSupport ? `${this.parentSupport.name}/` : ''}${this.name}`;
     }
 
-    public static parse(value: unknown) {
-        return this.fromSchema(ConfigHotfixSchema.parse(value));
+    public static parse(value: unknown, shadow?: boolean) {
+        return this.fromSchema(ConfigHotfixSchema.parse(value), shadow);
     }
-    public static fromSchema(value: Zod.infer<typeof ConfigHotfixSchema>) {
+    public static fromSchema(value: Zod.infer<typeof ConfigHotfixSchema>, shadow?: boolean) {
         return new this({
             ...value,
             tags: value.tags?.map(t => Tagging.fromSchema(t))
-        });
+        }, shadow);
     }
 
-    public constructor(params: HotfixParams) {
+    public constructor(params: HotfixParams, shadow?: boolean) {
         this.name = params.name;
         this.branchName = params.branchName;
         this.sourceSha = params.sourceSha;
         this.upstream = params.upstream;
         this.intermediate = params.intermediate ?? false;
         this.tags = params.tags ??[];
+
+        this.shadow = shadow ?? false;
     }
 
     public async register(parentConfig: Config, parentSupport?: Support) {

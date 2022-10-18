@@ -1226,10 +1226,13 @@ export class ViewVersionCommand extends BaseInteractiveCommand {
         });
 
         await viewVersion(rootConfig, {
-            configs: ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()).parse(value), {
+            configs: async ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()).parse(value), (initial) => ({
                 type: 'multiselect',
                 message: 'Select Modules',
-                choices: configs.map(c => ({ title: c.pathspec, value: c.identifier, selected: targetConfigs.some(tc => tc.identifier === c.identifier) }))
+                choices: configs.map(c => ({ title: `${c.pathspec} [${c.resolveVersion()}]`, value: c.identifier, selected: initial?.some(tc => tc === c.identifier) }))
+            }), {
+                answerType: OverridablePromptAnswerTypes.StringArray,
+                defaultValue: targetConfigs.map(c => c.identifier)
             }),
             stdout: this.context.stdout,
             dryRun: this.dryRun
@@ -1238,8 +1241,6 @@ export class ViewVersionCommand extends BaseInteractiveCommand {
 }
 export class StampVersionCommand extends BaseInteractiveCommand {
     static paths = [['version', 'stamp']];
-
-    releaseName = Option.String('--name');
 
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');
@@ -1257,10 +1258,13 @@ export class StampVersionCommand extends BaseInteractiveCommand {
         });
 
         await stampVersion(rootConfig, {
-            configs: ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()).parse(value), {
+            configs: async ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()).parse(value), (initial) => ({
                 type: 'multiselect',
                 message: 'Select Modules',
-                choices: configs.map(c => ({ title: `${c.pathspec} [${c.resolveVersion()}]`, value: c.identifier, selected: targetConfigs.some(tc => tc.identifier === c.identifier) }))
+                choices: configs.map(c => ({ title: `${c.pathspec} [${c.resolveVersion()}]`, value: c.identifier, selected: initial?.some(tc => tc === c.identifier) }))
+            }), {
+                answerType: OverridablePromptAnswerTypes.StringArray,
+                defaultValue: targetConfigs.map(c => c.identifier)
             }),
             stdout: this.context.stdout,
             dryRun: this.dryRun
@@ -1269,8 +1273,6 @@ export class StampVersionCommand extends BaseInteractiveCommand {
 }
 export class SetVersionCommand extends BaseInteractiveCommand {
     static paths = [['version', 'set']];
-
-    releaseName = Option.String('--name');
 
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');
@@ -1288,10 +1290,13 @@ export class SetVersionCommand extends BaseInteractiveCommand {
         });
 
         await setVersion(rootConfig, {
-            configs: ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()).parse(value), {
+            configs: async ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()).parse(value), (initial) => ({
                 type: 'multiselect',
                 message: 'Select Modules',
-                choices: configs.map(c => ({ title: `${c.pathspec} [${c.resolveVersion()}]`, value: c.identifier, selected: targetConfigs.some(tc => tc.identifier === c.identifier) }))
+                choices: configs.map(c => ({ title: `${c.pathspec} [${c.resolveVersion()}]`, value: c.identifier, selected: initial?.some(tc => tc === c.identifier) }))
+            }), {
+                answerType: OverridablePromptAnswerTypes.StringArray,
+                defaultValue: targetConfigs.map(c => c.identifier)
             }),
             version: ({ config }) => this.createOverridablePrompt('version', value => Zod.string().nullable().transform(v => v || null).parse(value), initial => ({
                 type: 'text',
@@ -1306,10 +1311,15 @@ export class SetVersionCommand extends BaseInteractiveCommand {
 export class IncrementVersionCommand extends BaseInteractiveCommand {
     static paths = [['version', 'increment'], ['increment', 'version']];
 
-    releaseName = Option.String('--name');
-
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');
+
+    type = Option.String('--type', 'prerelease', {
+        description: 'Type type of version increment to use'
+    });
+    prereleaseIdentifier = Option.String('--prerelease-identifier', 'alpha', {
+        description: 'Identifier to use for prerelease versions'
+    });
 
     static usage = Command.Usage({
         description: 'Increment version',
@@ -1332,7 +1342,7 @@ export class IncrementVersionCommand extends BaseInteractiveCommand {
                 answerType: OverridablePromptAnswerTypes.StringArray,
                 defaultValue: targetConfigs.map(c => c.identifier)
             }),
-            type: () => this.createOverridablePrompt('type', value => Zod.union([ Zod.literal('major'), Zod.literal('minor'), Zod.literal('patch'), Zod.literal('prerelease'), Zod.literal('premajor'), Zod.literal('preminor'), Zod.literal('prepatch') ]).parse(value), {
+            type: () => this.createOverridablePrompt('type', value => Zod.union([ Zod.literal('major'), Zod.literal('minor'), Zod.literal('patch'), Zod.literal('prerelease'), Zod.literal('premajor'), Zod.literal('preminor'), Zod.literal('prepatch') ]).parse(value), initial => ({
                 type: 'select',
                 message: 'Release Type',
                 choices: [
@@ -1343,16 +1353,18 @@ export class IncrementVersionCommand extends BaseInteractiveCommand {
                     { title: 'Premajor', value: 'premajor' },
                     { title: 'Preminor', value: 'preminor' },
                     { title: 'Prepatch', value: 'prepatch' }
-                ]
-            }, {
-                defaultValue: 'prerelease'
+                ],
+                initial: initial ? [ 'prerelease', 'major', 'minor', 'patch', 'premajor', 'preminor', 'prepatch' ].indexOf(initial) : 0
+            }), {
+                defaultValue: this.type
             }),
             prereleaseIdentifier: () => this.createOverridablePrompt('prereleaseIdentifier', value => Zod.string().parse(value), initial => ({
                 type: 'text',
                 message: 'Prerelease Identifier',
                 initial
             }), {
-                defaultValue: 'alpha'
+                defaultValue: this.prereleaseIdentifier,
+                interactivity: 2
             }),
             stdout: this.context.stdout,
             dryRun: this.dryRun

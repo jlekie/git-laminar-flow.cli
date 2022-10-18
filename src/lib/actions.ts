@@ -61,6 +61,7 @@ export async function createFeature(rootConfig: Config, { stdout, dryRun, ...par
     branchName: ActionParam<string, { config: Config, fromElement: Element, featureName: string }>;
     checkout?: ActionParam<boolean, { config: Config }>;
     upstream?: ActionParam<string | undefined, { config: Config }>;
+    shadow?: ActionParam<boolean, { config: Config }>;
 }>) {
     const featureName = await params.name();
 
@@ -77,9 +78,10 @@ export async function createFeature(rootConfig: Config, { stdout, dryRun, ...par
             branchName: await params.branchName({ config, featureName, fromElement }),
             from,
             upstream: await params.upstream?.({ config }),
-            checkout: await params.checkout?.({ config })
+            checkout: await params.checkout?.({ config }),
+            shadow: await params.shadow?.({ config })
         };
-    }), async ({ config, from, branchName, upstream, checkout }) => {
+    }), async ({ config, from, branchName, upstream, checkout, shadow }) => {
         if (config.features.some(f => f.name === featureName)) {
             stdout?.write(Chalk.gray(`[${Chalk.magenta(config.pathspec)}] Feature ${featureName} already exists; bypassing`) + '\n');
             return;
@@ -94,7 +96,7 @@ export async function createFeature(rootConfig: Config, { stdout, dryRun, ...par
             branchName,
             sourceSha: await config.resolveCommitSha(fromBranch),
             upstream
-        });
+        }, shadow);
         source.features.push(feature);
         await feature.register(config, source instanceof Support ? source : undefined);
 
@@ -113,6 +115,7 @@ export async function createRelease(rootConfig: Config, { stdout, dryRun, ...par
     checkout?: ActionParam<boolean, { config: Config }>;
     intermediate?: ActionParam<boolean | undefined, { config: Config }>;
     upstream?: ActionParam<string | undefined, { config: Config }>;
+    shadow?: ActionParam<boolean, { config: Config }>;
 }>) {
     const releaseName = await params.name();
 
@@ -130,9 +133,10 @@ export async function createRelease(rootConfig: Config, { stdout, dryRun, ...par
             from,
             upstream: await params.upstream?.({ config }),
             intermediate: await params.intermediate?.({ config }),
-            checkout: await params.checkout?.({ config })
+            checkout: await params.checkout?.({ config }),
+            shadow: await params.shadow?.({ config })
         };
-    }), async ({ config, from, branchName, upstream, checkout, intermediate }) => {
+    }), async ({ config, from, branchName, upstream, checkout, intermediate, shadow }) => {
         if (config.releases.some(f => f.name === releaseName)) {
             stdout?.write(Chalk.gray(`[${Chalk.magenta(config.pathspec)}] Release ${releaseName} already exists; bypassing`) + '\n');
             return;
@@ -148,7 +152,7 @@ export async function createRelease(rootConfig: Config, { stdout, dryRun, ...par
             sourceSha: await config.resolveCommitSha(fromBranch),
             upstream,
             intermediate
-        });
+        }, shadow);
         source.releases.push(release);
         await release.register(config, source instanceof Support ? source : undefined);
 
@@ -198,6 +202,7 @@ export async function createHotfix(rootConfig: Config, { stdout, dryRun, ...para
     checkout?: ActionParam<boolean, { config: Config }>;
     intermediate?: ActionParam<boolean | undefined, { config: Config }>;
     upstream?: ActionParam<string | undefined, { config: Config }>;
+    shadow?: ActionParam<boolean, { config: Config }>;
 }>) {
     const hotfixName = await params.name();
 
@@ -217,13 +222,15 @@ export async function createHotfix(rootConfig: Config, { stdout, dryRun, ...para
         const branchName = await params.branchName({ config, fromElement, hotfixName });
         const source = fromElement.type === 'support' ? fromElement.support : config;
 
+        const shadow = await params.shadow?.({ config })
+
         const hotfix = new Hotfix({
             name: hotfixName,
             branchName,
             sourceSha: await config.resolveCommitSha(fromBranch),
             upstream: await params.upstream?.({ config }),
             intermediate: await params.intermediate?.({ config })
-        });
+        }, shadow);
         source.hotfixes.push(hotfix);
         await hotfix.register(config, source instanceof Support ? source : undefined);
 
@@ -1305,18 +1312,22 @@ export async function setVersion(rootConfig: Config, { stdout, dryRun, ...params
             version: await params.version({ config })
         };
     }), async ({ config, version }) => {
+        const targetIds = []
+
         if (version) {
             const sanitizedVersion = Semver.clean(version);
             if (!sanitizedVersion)
                 throw new Error(`Could not parse version from "${version}"`);
 
-            await config.setVersion(sanitizedVersion, { stdout, dryRun });
+            targetIds.push(...await config.setVersion(sanitizedVersion, { stdout, dryRun }));
             stdout?.write(`[${Chalk.blue(config.pathspec)}] Set version to v${sanitizedVersion}\n`);
         }
         else {
-            await config.setVersion(null, { stdout, dryRun });
+            targetIds.push(...await config.setVersion(null, { stdout, dryRun }));
             stdout?.write(`[${Chalk.blue(config.pathspec)}] ${Chalk.yellow('Cleared set version')}\n`);
         }
+
+        console.log('PEER CONFIGS: ', targetIds)
 
         await config.save({ stdout, dryRun });
     });
@@ -1344,6 +1355,7 @@ export async function incrementVersion(rootConfig: Config, { stdout, dryRun, ...
     configs: ActionParam<Config[], { configs: Config[] }>;
     type: ActionParam<Semver.ReleaseType>;
     prereleaseIdentifier: ActionParam<string>;
+    cascade?: ActionParam<boolean>;
 }>) {
     const allConfigs = rootConfig.flattenConfigs().filter(c => c.managed);
     const configs = await params.configs({ configs: allConfigs });
@@ -1359,21 +1371,29 @@ export async function incrementVersion(rootConfig: Config, { stdout, dryRun, ...
         }
     })();
 
-    await Bluebird.mapSeries(Bluebird.mapSeries(configs, async config => {
-        return {
-            config
-        };
-    }), async ({ config }) => {
+    const processConfig = async (config: Config) => {
+        const dependentConfigs = []
+
         const version = config.resolveVersion();
         if (version) {
             const incrementedVersion = Semver.inc(version, type, prereleaseIdentifier);
             if (!incrementedVersion)
                 throw new Error(`Could not increment version from "${version}"`);
 
-            await config.setVersion(incrementedVersion, { stdout, dryRun });
+            dependentConfigs.push(...await config.setVersion(incrementedVersion, { stdout, dryRun }));
             stdout?.write(`[${Chalk.blue(config.pathspec)}] Incremented version from v${version} to v${incrementedVersion}\n`);
 
             await config.save({ stdout, dryRun });
         }
-    });
+
+        return dependentConfigs;
+    }
+
+    const dependentConfigs = _(await Bluebird.mapSeries(Bluebird.mapSeries(configs, async config => {
+        return {
+            config
+        };
+    }), ({ config }) => processConfig(config))).flatten().uniqBy(c => c.identifier).value();
+
+    await Bluebird.mapSeries(dependentConfigs, config => processConfig(config));
 }

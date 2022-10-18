@@ -167,6 +167,8 @@ export class ViewCommand extends BaseCommand {
         const settings = await this.loadSettings();
         const config = await loadV2Config(configPath, settings, { verify: false, stdout: this.context.stdout, dryRun: this.dryRun });
 
+        this.context.stdout.write(Chalk.gray(`Hash: ${config.calculateHash()}\n`));
+
         const tmpDir = await Tmp.dir({
             unsafeCleanup: true
         });

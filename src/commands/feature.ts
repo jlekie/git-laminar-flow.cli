@@ -19,6 +19,9 @@ export class CreateInteractiveCommand extends BaseInteractiveCommand {
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');
 
+    featureName = Option.String('--name');
+    shadow = Option.Boolean('--shadow');
+
     static usage = Command.Usage({
         description: 'Create feature',
         category: 'Feature'
@@ -35,6 +38,8 @@ export class CreateInteractiveCommand extends BaseInteractiveCommand {
             name: () => this.createOverridablePrompt('featureName', value => Zod.string().nonempty().parse(value), {
                 type: 'text',
                 message: 'Feature Name'
+            }, {
+                defaultValue: this.featureName
             }),
             from: ({ config, activeSupport }) => this.createOverridablePrompt('from', value => Zod.string().url().parse(value), (initial) => ({
                 type: 'text',
@@ -42,7 +47,8 @@ export class CreateInteractiveCommand extends BaseInteractiveCommand {
                 initial
             }), {
                 pathspecPrefix: config.pathspec,
-                defaultValue: activeSupport ? `support://${activeSupport}/develop` : 'branch://develop'
+                defaultValue: activeSupport ? `support://${activeSupport}/develop` : 'branch://develop',
+                interactivity: 2
             }),
             branchName: ({ config, fromElement, featureName }) => this.createOverridablePrompt('branchName', value => Zod.string().parse(value), (initial) => ({
                 type: 'text',
@@ -50,19 +56,24 @@ export class CreateInteractiveCommand extends BaseInteractiveCommand {
                 initial
             }), {
                 pathspecPrefix: config.pathspec,
-                defaultValue: `${fromElement.type === 'support' ? `support/${fromElement.support.name}/` : ''}feature/${featureName}`
+                defaultValue: `${fromElement.type === 'support' ? `support/${fromElement.support.name}/` : ''}feature/${featureName}`,
+                interactivity: 2
             }),
             configs: ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()).parse(value), {
                 type: 'multiselect',
                 message: 'Select Modules',
                 choices: configs.map(c => ({ title: c.pathspec, value: c.identifier, selected: targetConfigs.some(tc => tc.identifier === c.identifier) }))
+            }, {
+                defaultValue: targetConfigs.map(c => c.identifier)
             }),
-            checkout: ({ config }) => this.createOverridablePrompt('checkout', value => Zod.boolean().parse(value), {
+            checkout: ({ config }) => this.createOverridablePrompt('checkout', value => Zod.boolean().parse(value), (initial) => ({
                 type: 'confirm',
                 message: `[${Chalk.magenta(config.pathspec)}] Checkout`,
-            }, {
+                initial
+            }), {
                 pathspecPrefix: config.pathspec,
-                defaultValue: false
+                defaultValue: true,
+                interactivity: 2
             }),
             upstream: ({ config }) => this.createOverridablePrompt('upstream', value => Zod.string().nullable().transform(v => v ?? undefined).parse(value), (initial) => ({
                 type: 'select',
@@ -74,7 +85,17 @@ export class CreateInteractiveCommand extends BaseInteractiveCommand {
                 initial: config.upstreams.findIndex(u => u.name === initial) + 1
             }), {
                 pathspecPrefix: config.pathspec,
-                defaultValue: config.upstreams[0]?.name ?? null
+                defaultValue: config.upstreams[0]?.name ?? null,
+                interactivity: 2
+            }),
+            shadow: ({ config }) => this.createOverridablePrompt('shadow', value => Zod.boolean().parse(value), (initial) => ({
+                type: 'confirm',
+                message: `[${Chalk.magenta(config.pathspec)}] Shadow Feature`,
+                initial
+            }), {
+                pathspecPrefix: config.pathspec,
+                defaultValue: this.shadow ?? false,
+                interactivity: 3
             }),
             stdout: this.context.stdout,
             dryRun: this.dryRun

@@ -25,6 +25,7 @@ export class CreateInteractiveCommand extends BaseInteractiveCommand {
 
     checkout = Option.Boolean('--checkout');
     intermediate = Option.Boolean('--intermediate');
+    shadow = Option.Boolean('--shadow');
 
     static usage = Command.Usage({
         description: 'Create hotfix',
@@ -79,6 +80,15 @@ export class CreateInteractiveCommand extends BaseInteractiveCommand {
                 initial: config.upstreams.length > 0 ? 1 : 0
             }),
             intermediate: () => this.intermediate,
+            shadow: ({ config }) => this.createOverridablePrompt('shadow', value => Zod.boolean().parse(value), (initial) => ({
+                type: 'confirm',
+                message: `[${Chalk.magenta(config.pathspec)}] Shadow Release`,
+                initial
+            }), {
+                pathspecPrefix: config.pathspec,
+                defaultValue: this.shadow ?? false,
+                interactivity: 3
+            }),
             stdout: this.context.stdout,
             dryRun: this.dryRun
         });

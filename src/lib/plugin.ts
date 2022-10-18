@@ -17,7 +17,7 @@ export interface Plugin {
         config: Config,
         stdout?: Stream.Writable
         dryRun?: boolean;
-    }): void | Promise<void>;
+    }): void | Config[] | Promise<void> | Promise<Config[]>;
 
     registerCommands?(): Array<CommandClass> | Promise<Array<CommandClass>>;
 }
