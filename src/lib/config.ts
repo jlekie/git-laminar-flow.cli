@@ -1752,10 +1752,15 @@ export class Config {
             delete this.version;
         }
 
-        return _(this.dependencies)
-            .map(id => this.parentConfig?.submodules.find(s => s.config.identifier === id)?.config)
-            .compact()
-            .value()
+        if (this.parentConfig) {
+            let rootConfig = this.parentConfig;
+            while (rootConfig?.parentConfig)
+                rootConfig = rootConfig.parentConfig;
+
+            return rootConfig.flattenConfigs().filter(c => c.dependencies.indexOf(this.identifier) >= 0);
+        }
+
+        return [];
     }
 
     public flattenCommitMessageTemplates() {

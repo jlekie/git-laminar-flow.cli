@@ -1353,47 +1353,93 @@ export async function stampVersion(rootConfig: Config, { stdout, dryRun, ...para
 }
 export async function incrementVersion(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
     configs: ActionParam<Config[], { configs: Config[] }>;
-    type: ActionParam<Semver.ReleaseType>;
-    prereleaseIdentifier: ActionParam<string>;
+    type: ActionParam<Semver.ReleaseType, { config: Config }>;
+    prereleaseIdentifier: ActionParam<string, { config: Config }>;
     cascade?: ActionParam<boolean>;
 }>) {
     const allConfigs = rootConfig.flattenConfigs().filter(c => c.managed);
     const configs = await params.configs({ configs: allConfigs });
-    const type = await params.type();
+    // const type = await params.type();
+    const cascade = await params.cascade?.() ?? false;
 
-    const prereleaseIdentifier = await (async () => {
-        switch (type) {
-            case 'premajor':
-            case 'preminor':
-            case 'prepatch':
-            case 'prerelease':
-                return params.prereleaseIdentifier();
-        }
-    })();
+    // const prereleaseIdentifier = await (async () => {
+    //     switch (type) {
+    //         case 'premajor':
+    //         case 'preminor':
+    //         case 'prepatch':
+    //         case 'prerelease':
+    //             return params.prereleaseIdentifier();
+    //     }
+    // })();
 
-    const processConfig = async (config: Config) => {
-        const dependentConfigs = []
+    await Bluebird.mapSeries(Bluebird.mapSeries([
+        ...configs,
+        ...(cascade ? resolveDependants(configs, allConfigs) : [])
+    ], async config => {
+        const type = await params.type({ config });
+        const prereleaseIdentifier = await (async () => {
+            switch (type) {
+                case 'premajor':
+                case 'preminor':
+                case 'prepatch':
+                case 'prerelease':
+                    return params.prereleaseIdentifier({ config });
+            }
+        })();
 
+        return {
+            config,
+            type,
+            prereleaseIdentifier
+        };
+    }), async ({ config, type, prereleaseIdentifier }) => {
         const version = config.resolveVersion();
         if (version) {
             const incrementedVersion = Semver.inc(version, type, prereleaseIdentifier);
             if (!incrementedVersion)
                 throw new Error(`Could not increment version from "${version}"`);
 
-            dependentConfigs.push(...await config.setVersion(incrementedVersion, { stdout, dryRun }));
+            await config.setVersion(incrementedVersion, { stdout, dryRun });
             stdout?.write(`[${Chalk.blue(config.pathspec)}] Incremented version from v${version} to v${incrementedVersion}\n`);
 
             await config.save({ stdout, dryRun });
         }
+    });
+}
 
-        return dependentConfigs;
-    }
+export async function setDependencies(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
+    configs: ActionParam<Config[], { configs: Config[] }>;
+    dependencies: ActionParam<Config[], { config: Config, configs: Config[] }>;
+}>) {
+    const allConfigs = rootConfig.flattenConfigs().filter(c => c.managed);
+    const configs = await params.configs({ configs: allConfigs });
 
-    const dependentConfigs = _(await Bluebird.mapSeries(Bluebird.mapSeries(configs, async config => {
+    await Bluebird.mapSeries(Bluebird.mapSeries(configs, async config => {
         return {
-            config
+            config,
+            dependencies: await params.dependencies({ config, configs: allConfigs })
         };
-    }), ({ config }) => processConfig(config))).flatten().uniqBy(c => c.identifier).value();
+    }), async ({ config, dependencies }) => {
+        config.dependencies = dependencies.map(d => d.identifier);
 
-    await Bluebird.mapSeries(dependentConfigs, config => processConfig(config));
+        await config.save({ stdout, dryRun });
+    });
+}
+
+function resolveDependants(configs: Config[], allConfigs: Config[]) {
+    const dependentConfigs: Config[] = [];
+
+    const inner = (config: Config) => {
+        for (const dependentConfig of allConfigs.filter(c => c.dependencies.indexOf(config.identifier) >= 0)) {
+            if (dependentConfigs.indexOf(dependentConfig) < 0 && configs.indexOf(dependentConfig) < 0) {
+                dependentConfigs.push(dependentConfig);
+                inner(dependentConfig);
+            }
+        }
+    };
+
+    for (const config of configs)
+        inner(config);
+
+    return dependentConfigs;
 }

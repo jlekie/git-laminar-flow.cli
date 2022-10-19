@@ -15,7 +15,7 @@ import * as Prompts from 'prompts';
 import { BaseCommand, BaseInteractiveCommand, OverridablePromptAnswerTypes } from './common';
 
 import { iterateTopologicallyNonMapped } from '../lib/config';
-import { commit, sync, setVersion, incrementVersion, viewVersion, stampVersion } from '../lib/actions';
+import { commit, sync, setVersion, incrementVersion, viewVersion, stampVersion, setDependencies } from '../lib/actions';
 import { executeVscode } from '../lib/exec';
 import { StatusTypes } from '../lib/porcelain';
 
@@ -1320,6 +1320,9 @@ export class IncrementVersionCommand extends BaseInteractiveCommand {
     prereleaseIdentifier = Option.String('--prerelease-identifier', 'alpha', {
         description: 'Identifier to use for prerelease versions'
     });
+    cascade = Option.Boolean('--cascade', false, {
+        description: 'Cascade version change across dependents'
+    });
 
     static usage = Command.Usage({
         description: 'Increment version',
@@ -1342,9 +1345,9 @@ export class IncrementVersionCommand extends BaseInteractiveCommand {
                 answerType: OverridablePromptAnswerTypes.StringArray,
                 defaultValue: targetConfigs.map(c => c.identifier)
             }),
-            type: () => this.createOverridablePrompt('type', value => Zod.union([ Zod.literal('major'), Zod.literal('minor'), Zod.literal('patch'), Zod.literal('prerelease'), Zod.literal('premajor'), Zod.literal('preminor'), Zod.literal('prepatch') ]).parse(value), initial => ({
+            type: ({ config }) => this.createOverridablePrompt(`${config.pathspec}/type`, value => Zod.union([ Zod.literal('major'), Zod.literal('minor'), Zod.literal('patch'), Zod.literal('prerelease'), Zod.literal('premajor'), Zod.literal('preminor'), Zod.literal('prepatch') ]).parse(value), initial => ({
                 type: 'select',
-                message: 'Release Type',
+                message: `[${Chalk.magenta(config.pathspec)}] Release Type`,
                 choices: [
                     { title: 'Prerelease', value: 'prerelease' },
                     { title: 'Major', value: 'major' },
@@ -1356,15 +1359,63 @@ export class IncrementVersionCommand extends BaseInteractiveCommand {
                 ],
                 initial: initial ? [ 'prerelease', 'major', 'minor', 'patch', 'premajor', 'preminor', 'prepatch' ].indexOf(initial) : 0
             }), {
-                defaultValue: this.type
+                defaultValue: this.type,
+                interactivity: 2
             }),
-            prereleaseIdentifier: () => this.createOverridablePrompt('prereleaseIdentifier', value => Zod.string().parse(value), initial => ({
+            prereleaseIdentifier: ({ config }) => this.createOverridablePrompt(`${config.pathspec}/prereleaseIdentifier`, value => Zod.string().parse(value), initial => ({
                 type: 'text',
-                message: 'Prerelease Identifier',
+                message: `[${Chalk.magenta(config.pathspec)}] Prerelease Identifier`,
                 initial
             }), {
                 defaultValue: this.prereleaseIdentifier,
-                interactivity: 2
+                interactivity: 3
+            }),
+            cascade: () => this.createOverridablePrompt('cascade', value => Zod.boolean().parse(value), initial => ({
+                type: 'confirm',
+                message: `Cascade version changes?`,
+                initial
+            }), {
+                defaultValue: this.cascade,
+            }),
+            stdout: this.context.stdout,
+            dryRun: this.dryRun
+        });
+    }
+}
+export class SetDependenciesCommand extends BaseInteractiveCommand {
+    static paths = [['dependencies', 'set'], ['set', 'dependencies']];
+
+    include = Option.Array('--include');
+    exclude = Option.Array('--exclude');
+
+    static usage = Command.Usage({
+        description: 'Increment version',
+        category: 'Version'
+    });
+
+    public async executeCommand() {
+        const rootConfig = await this.loadConfig();
+        const targetConfigs = await rootConfig.resolveFilteredConfigs({
+            included: this.include,
+            excluded: this.exclude
+        });
+
+        await setDependencies(rootConfig, {
+            configs: async ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()).parse(value), (initial) => ({
+                type: 'multiselect',
+                message: 'Select Modules',
+                choices: configs.map(c => ({ title: `${c.pathspec} [${c.resolveVersion()}]`, value: c.identifier, selected: initial?.some(tc => tc === c.identifier) }))
+            }), {
+                answerType: OverridablePromptAnswerTypes.StringArray,
+                defaultValue: targetConfigs.map(c => c.identifier)
+            }),
+            dependencies: async ({ config, configs }) => this.createOverridablePrompt('dependencies', value => Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()).parse(value), (initial) => ({
+                type: 'multiselect',
+                message: `[${Chalk.magenta(config.pathspec)}] Dependencies`,
+                choices: configs.map(c => ({ title: `${c.pathspec} [${c.resolveVersion()}]`, value: c.identifier, selected: initial?.some(tc => tc === c.identifier) }))
+            }), {
+                answerType: OverridablePromptAnswerTypes.StringArray,
+                defaultValue: config.dependencies
             }),
             stdout: this.context.stdout,
             dryRun: this.dryRun
