@@ -1,6 +1,6 @@
 {
   "name": "@jlekie/git-laminar-flow-cli",
-  "version": "1.0.0-alpha.41",
+  "version": "1.0.0-alpha.42",
   "license": "UNLICENSED",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -21,7 +21,7 @@
     "/plugins"
   ],
   "dependencies": {
-    "@jlekie/git-laminar-flow": "workspace:*",
+    "@jlekie/git-laminar-flow": "workspace:^",
     "@rushstack/eslint-patch": "^1.1.1",
     "axios": "^0.26.1",
     "bluebird": "^3.7.2",
