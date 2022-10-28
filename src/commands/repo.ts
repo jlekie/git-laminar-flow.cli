@@ -15,7 +15,7 @@ import * as Prompts from 'prompts';
 import { BaseCommand, BaseInteractiveCommand, OverridablePromptAnswerTypes } from './common';
 
 import { iterateTopologicallyNonMapped } from '../lib/config';
-import { commit, sync, setVersion, incrementVersion, viewVersion, stampVersion, setDependencies } from '../lib/actions';
+import { commit, sync, setVersion, incrementVersion, viewVersion, stampVersion, setDependencies, listDependants } from '../lib/actions';
 import { executeVscode } from '../lib/exec';
 import { StatusTypes } from '../lib/porcelain';
 
@@ -1382,6 +1382,38 @@ export class IncrementVersionCommand extends BaseInteractiveCommand {
         });
     }
 }
+export class ListDependentsCommand extends BaseInteractiveCommand {
+    static paths = [['dependents', 'list'], ['list', 'dependents']];
+
+    include = Option.Array('--include');
+    exclude = Option.Array('--exclude');
+
+    static usage = Command.Usage({
+        description: 'List dependents',
+        category: 'Dependency'
+    });
+
+    public async executeCommand() {
+        const rootConfig = await this.loadConfig();
+        const targetConfigs = await rootConfig.resolveFilteredConfigs({
+            included: this.include,
+            excluded: this.exclude
+        });
+
+        await listDependants(rootConfig, {
+            configs: async ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()).parse(value), (initial) => ({
+                type: 'multiselect',
+                message: 'Select Modules',
+                choices: configs.map(c => ({ title: `${c.pathspec} [${c.resolveVersion()}]`, value: c.identifier, selected: initial?.some(tc => tc === c.identifier) }))
+            }), {
+                answerType: OverridablePromptAnswerTypes.StringArray,
+                defaultValue: targetConfigs.map(c => c.identifier)
+            }),
+            stdout: this.context.stdout,
+            dryRun: this.dryRun
+        });
+    }
+}
 export class SetDependenciesCommand extends BaseInteractiveCommand {
     static paths = [['dependencies', 'set'], ['set', 'dependencies']];
 
@@ -1389,8 +1421,8 @@ export class SetDependenciesCommand extends BaseInteractiveCommand {
     exclude = Option.Array('--exclude');
 
     static usage = Command.Usage({
-        description: 'Increment version',
-        category: 'Version'
+        description: 'Set dependencies',
+        category: 'Dependency'
     });
 
     public async executeCommand() {

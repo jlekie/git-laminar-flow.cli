@@ -1407,6 +1407,24 @@ export async function incrementVersion(rootConfig: Config, { stdout, dryRun, ...
     });
 }
 
+export async function listDependants(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
+    configs: ActionParam<Config[], { configs: Config[] }>;
+}>) {
+    const allConfigs = rootConfig.flattenConfigs().filter(c => c.managed);
+    const configs = await params.configs({ configs: allConfigs });
+
+    await Bluebird.mapSeries(Bluebird.mapSeries(configs, async config => {
+        return {
+            config
+        };
+    }), async ({ config }) => {
+        stdout?.write(`${config.pathspec.toUpperCase()}\n`)
+        const dependents = allConfigs.filter(c => c.dependencies.indexOf(config.identifier) >= 0)
+        for (const dependent of dependents)
+            stdout?.write('  - ' + dependent.pathspec + '\n');
+    });
+}
+
 export async function setDependencies(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
     configs: ActionParam<Config[], { configs: Config[] }>;
     dependencies: ActionParam<Config[], { config: Config, configs: Config[] }>;

@@ -746,6 +746,9 @@ export class Config {
             if (type === 'repo') {
                 return Minimatch(this.pathspec, pattern);
             }
+            else if (type === 'submodule' && this.parentSubmodule) {
+                return Minimatch(this.parentSubmodule.name, pattern);
+            }
             else {
                 const artifact = await this.resolveCurrentArtifact();
 

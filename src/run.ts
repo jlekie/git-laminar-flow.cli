@@ -37,6 +37,7 @@ cli.register(RepoCommands.SetVersionCommand);
 cli.register(RepoCommands.IncrementVersionCommand);
 cli.register(RepoCommands.StampVersionCommand);
 cli.register(RepoCommands.SetDependenciesCommand);
+cli.register(RepoCommands.ListDependentsCommand);
 
 // cli.register(SubmoduleCommands.CloneCommand);
 
