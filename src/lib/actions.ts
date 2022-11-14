@@ -747,6 +747,20 @@ export async function closeRelease(rootConfig: Config, { stdout, dryRun, ...para
                 const { config, release, deleteLocalBranch, deleteRemoteBranch } = groupedConfig;
 
                 try {
+                    const version = release.resolveVersion();
+                    if (version) {
+                        const developVersion = await config.resolveVersion('develop');
+                        if (developVersion && Semver.lt(version, developVersion))
+                            throw new Error(`Release version (${version}) is less than the develop version (${developVersion})`);
+
+                        const masterVersion = await config.resolveVersion('master');
+                        if (masterVersion && Semver.lt(version, masterVersion))
+                            throw new Error(`Release version (${version}) is less than the master version (${masterVersion})`);
+
+                        await config.setVersion('develop', version, { stdout, dryRun });
+                        await config.setVersion('master', version, { stdout, dryRun })
+                    }
+
                     await config.checkoutBranch(release.parentSupport?.developBranchName ?? config.resolveDevelopBranchName(), { stdout, dryRun });
 
                     if (await config.branchExists(release.branchName, { stdout, dryRun }) && deleteLocalBranch)
