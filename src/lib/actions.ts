@@ -626,7 +626,7 @@ export async function closeRelease(rootConfig: Config, { stdout, dryRun, ...para
                         const templateData = {
                             releaseName: release.name,
                             intermediate: release.intermediate,
-                            version: release.parentConfig.resolveVersion()
+                            version: await release.parentConfig.resolveCurrentArtifactVersion()
                         };
 
                         const commitMessage = commitMessageTemplate?.messageTemplate(templateData) ?? release.resolveCommitMessageTemplate()(templateData);
@@ -704,7 +704,7 @@ export async function closeRelease(rootConfig: Config, { stdout, dryRun, ...para
                         const templateData = {
                             releaseName: release.name,
                             intermediate: release.intermediate,
-                            version: release.parentConfig.resolveVersion()
+                            version: await release.parentConfig.resolveCurrentArtifactVersion()
                         };
 
                         // await config.swapCheckoutTree(config => config.releases.find(r => r.name === release.name && r.parentSupport?.name === release.parentSupport?.name)?.parentSupport?.masterBranchName ?? config.resolveMasterBranchName(), async () => {
@@ -1282,29 +1282,56 @@ export async function createSubmodule(config: Config, { stdout, dryRun, ...param
 }
 
 export async function viewVersion(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
-    configs: ActionParam<Config[], { configs: Config[] }>;
+    configs: ActionParam<Config[], { configs: { config: Config, version?: string }[] }>;
 }>) {
     const allConfigs = rootConfig.flattenConfigs().filter(c => c.managed);
-    const configs = await params.configs({ configs: allConfigs });
+    const configs = await params.configs({ configs: await Bluebird.map(allConfigs, async config => ({ config, version: await config.resolveCurrentArtifactVersion(true) })) });
 
-    await Bluebird.map(Bluebird.mapSeries(configs, async config => {
+    await Bluebird.mapSeries(Bluebird.mapSeries(configs, async config => {
         return {
             config
         };
     }), async ({ config }) => {
-        const version = config.resolveVersion();
-        if (version)
-            stdout?.write(`[${Chalk.blue(config.pathspec)}] v${version}\n`);
-        else
-            stdout?.write(`[${Chalk.blue(config.pathspec)}] ${Chalk.yellow('N/A')}\n`);
+        function writeStatus(label: string, primary: () => string | undefined, secondary?: () => string | undefined) {
+            let value = primary();
+            if (value) {
+                value = Chalk.green(value);
+            }
+            else {
+                value = secondary?.();
+                if (value)
+                    value = Chalk.yellow(value);
+                else
+                    value = Chalk.red('N/A');
+            }
+
+            stdout?.write(`  ${Chalk.cyan(label)}: ${value}\n`);
+        }
+
+        stdout?.write(`[${Chalk.blue(config.pathspec)}]\n`);
+        writeStatus('Master', () => config.resolveVersion('master'));
+        writeStatus('Develop', () => config.resolveVersion('develop'), () => config.resolveVersion('master'));
+        for (const feature of config.features) {
+            writeStatus(`Feature "${feature.name}"`, () => feature.resolveVersion(), () => feature.parentConfig.resolveVersion('develop'));
+        }
+        for (const release of config.releases) {
+            writeStatus(`Release "${release.name}"`, () => release.resolveVersion(), () => release.parentConfig.resolveVersion('develop'));
+        }
+        for (const hotfix of config.hotfixes) {
+            writeStatus(`Hotfix "${hotfix.name}"`, () => hotfix.resolveVersion(), () => hotfix.parentConfig.resolveVersion('develop'));
+        }
+        for (const support of config.supports) {
+            writeStatus(`Support "${support.name}" - Master`, () => support.resolveVersion('master'));
+            writeStatus(`Support "${support.name}" - Develop`, () => support.resolveVersion('develop'));
+        }
     });
 }
 export async function setVersion(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
-    configs: ActionParam<Config[], { configs: Config[] }>;
+    configs: ActionParam<Config[], { configs: { config: Config, version?: string }[] }>;
     version: ActionParam<string | null, { config: Config }>;
 }>) {
     const allConfigs = rootConfig.flattenConfigs().filter(c => c.managed);
-    const configs = await params.configs({ configs: allConfigs });
+    const configs = await params.configs({ configs: await Bluebird.map(allConfigs, async config => ({ config, version: await config.resolveCurrentArtifactVersion(true) })) });
 
     await Bluebird.mapSeries(Bluebird.mapSeries(configs, async config => {
         return {
@@ -1312,18 +1339,18 @@ export async function setVersion(rootConfig: Config, { stdout, dryRun, ...params
             version: await params.version({ config })
         };
     }), async ({ config, version }) => {
-        const targetIds = []
+        const targetIds = [];
 
         if (version) {
             const sanitizedVersion = Semver.clean(version);
             if (!sanitizedVersion)
                 throw new Error(`Could not parse version from "${version}"`);
 
-            targetIds.push(...await config.setVersion(sanitizedVersion, { stdout, dryRun }));
+            targetIds.push(...await config.setCurrentArtifactVersion(sanitizedVersion, { stdout, dryRun }));
             stdout?.write(`[${Chalk.blue(config.pathspec)}] Set version to v${sanitizedVersion}\n`);
         }
         else {
-            targetIds.push(...await config.setVersion(null, { stdout, dryRun }));
+            targetIds.push(...await config.setCurrentArtifactVersion(null, { stdout, dryRun }));
             stdout?.write(`[${Chalk.blue(config.pathspec)}] ${Chalk.yellow('Cleared set version')}\n`);
         }
 
@@ -1333,36 +1360,38 @@ export async function setVersion(rootConfig: Config, { stdout, dryRun, ...params
     });
 }
 export async function stampVersion(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
-    configs: ActionParam<Config[], { configs: Config[] }>;
+    configs: ActionParam<Config[], { configs: { config: Config, version?: string }[] }>;
 }>) {
     const allConfigs = rootConfig.flattenConfigs().filter(c => c.managed);
-    const configs = await params.configs({ configs: allConfigs });
+    const configs = await params.configs({ configs: await Bluebird.map(allConfigs, async config => ({ config, version: await config.resolveCurrentArtifactVersion(true) })) });
 
     await Bluebird.mapSeries(Bluebird.mapSeries(configs, async config => {
         return {
             config
         };
     }), async ({ config }) => {
-        const version = config.resolveVersion();
+        const version = await config.resolveCurrentArtifactVersion(true);
         if (!version)
             return;
 
-        await config.setVersion(version, { stdout, dryRun });
+        await config.setCurrentArtifactVersion(version, { stdout, dryRun });
         stdout?.write(`[${Chalk.blue(config.pathspec)}] Set version to v${version}\n`);
     });
 }
 export async function incrementVersion(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
-    configs: ActionParam<Config[], { configs: Config[] }>;
+    configs: ActionParam<Config[], { configs: { config: Config, version?: string }[] }>;
     type: ActionParam<Semver.ReleaseType, { config: Config }>;
     prereleaseIdentifier: ActionParam<string, { config: Config }>;
     cascade?: ActionParam<boolean>;
     cascadeConfigs: ActionParam<Config[], { configs: Config[] }>;
 }>) {
     const allConfigs = rootConfig.flattenConfigs().filter(c => c.managed);
-    const configs = await params.configs({ configs: allConfigs });
+    const configs = await params.configs({ configs: await Bluebird.map(allConfigs, async config => ({ config, version: await config.resolveCurrentArtifactVersion(true) })) });
     // const type = await params.type();
     const cascade = await params.cascade?.() ?? false;
-    const cascadedConfigs = cascade ? await params.cascadeConfigs({ configs: resolveDependants(configs, allConfigs) }) : [];
+
+    const dependantConfigs = resolveDependants(configs, allConfigs);
+    const cascadedConfigs = cascade && dependantConfigs.length > 0 ? await params.cascadeConfigs({ configs: dependantConfigs }) : [];
 
     // const prereleaseIdentifier = await (async () => {
     //     switch (type) {
@@ -1395,13 +1424,13 @@ export async function incrementVersion(rootConfig: Config, { stdout, dryRun, ...
             prereleaseIdentifier
         };
     }), async ({ config, type, prereleaseIdentifier }) => {
-        const version = config.resolveVersion();
+        const version = await config.resolveCurrentArtifactVersion(true);
         if (version) {
             const incrementedVersion = Semver.inc(version, type, prereleaseIdentifier);
             if (!incrementedVersion)
                 throw new Error(`Could not increment version from "${version}"`);
 
-            await config.setVersion(incrementedVersion, { stdout, dryRun });
+            await config.setCurrentArtifactVersion(incrementedVersion, { stdout, dryRun });
             stdout?.write(`[${Chalk.blue(config.pathspec)}] Incremented version from v${version} to v${incrementedVersion}\n`);
 
             await config.save({ stdout, dryRun });

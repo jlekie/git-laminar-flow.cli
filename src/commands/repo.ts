@@ -1226,10 +1226,10 @@ export class ViewVersionCommand extends BaseInteractiveCommand {
         });
 
         await viewVersion(rootConfig, {
-            configs: async ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()).parse(value), (initial) => ({
+            configs: async ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.map(c => c.config).find(c => c.identifier === id)).compact().value()).parse(value), (initial) => ({
                 type: 'multiselect',
                 message: 'Select Modules',
-                choices: configs.map(c => ({ title: `${c.pathspec} [${c.resolveVersion()}]`, value: c.identifier, selected: initial?.some(tc => tc === c.identifier) }))
+                choices: configs.map(c => ({ title: `${c.config.pathspec} [${c.version}]`, value: c.config.identifier, selected: initial?.some(tc => tc === c.config.identifier) }))
             }), {
                 answerType: OverridablePromptAnswerTypes.StringArray,
                 defaultValue: targetConfigs.map(c => c.identifier)
@@ -1258,10 +1258,10 @@ export class StampVersionCommand extends BaseInteractiveCommand {
         });
 
         await stampVersion(rootConfig, {
-            configs: async ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()).parse(value), (initial) => ({
+            configs: async ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.map(c => c.config).find(c => c.identifier === id)).compact().value()).parse(value), (initial) => ({
                 type: 'multiselect',
                 message: 'Select Modules',
-                choices: configs.map(c => ({ title: `${c.pathspec} [${c.resolveVersion()}]`, value: c.identifier, selected: initial?.some(tc => tc === c.identifier) }))
+                choices: configs.map(c => ({ title: `${c.config.pathspec} [${c.version}]`, value: c.config.identifier, selected: initial?.some(tc => tc === c.config.identifier) }))
             }), {
                 answerType: OverridablePromptAnswerTypes.StringArray,
                 defaultValue: targetConfigs.map(c => c.identifier)
@@ -1290,10 +1290,10 @@ export class SetVersionCommand extends BaseInteractiveCommand {
         });
 
         await setVersion(rootConfig, {
-            configs: async ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()).parse(value), (initial) => ({
+            configs: async ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.map(c => c.config).find(c => c.identifier === id)).compact().value()).parse(value), (initial) => ({
                 type: 'multiselect',
                 message: 'Select Modules',
-                choices: configs.map(c => ({ title: `${c.pathspec} [${c.resolveVersion()}]`, value: c.identifier, selected: initial?.some(tc => tc === c.identifier) }))
+                choices: configs.map(c => ({ title: `${c.config.pathspec} [${c.version}]`, value: c.config.identifier, selected: initial?.some(tc => tc === c.config.identifier) }))
             }), {
                 answerType: OverridablePromptAnswerTypes.StringArray,
                 defaultValue: targetConfigs.map(c => c.identifier)
@@ -1337,10 +1337,10 @@ export class IncrementVersionCommand extends BaseInteractiveCommand {
         });
 
         await incrementVersion(rootConfig, {
-            configs: async ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()).parse(value), (initial) => ({
+            configs: async ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.map(c => c.config).find(c => c.identifier === id)).compact().value()).parse(value), (initial) => ({
                 type: 'multiselect',
                 message: 'Select Modules',
-                choices: configs.map(c => ({ title: `${c.pathspec} [${c.resolveVersion()}]`, value: c.identifier, selected: initial?.some(tc => tc === c.identifier) }))
+                choices: configs.map(c => ({ title: `${c.config.pathspec} [${c.version}]`, value: c.config.identifier, selected: initial?.some(tc => tc === c.config.identifier) }))
             }), {
                 answerType: OverridablePromptAnswerTypes.StringArray,
                 defaultValue: targetConfigs.map(c => c.identifier)

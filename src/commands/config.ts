@@ -13,7 +13,7 @@ import * as Yaml from 'js-yaml';
 import * as Tmp from 'tmp-promise';
 
 import * as Zod from 'zod';
-import { RecursiveConfigSchema } from '@jlekie/git-laminar-flow';
+import { RecursiveConfigSchema, resolveApiVersion } from '@jlekie/git-laminar-flow';
 
 import { BaseCommand } from './common';
 import { exec, execCmd, executeEditor, ExecOptions } from '../lib/exec';
@@ -122,7 +122,7 @@ export class EditCommand extends BaseCommand {
         });
         const tmpConfigPath = Path.join(tmpDir.path, '.gitflow.yml');
 
-        await FS.writeFile(tmpConfigPath, Yaml.dump(this.recursive ? config.toRecursiveHash() : config.toHash(), { lineWidth: 120 }), 'utf8');
+        await FS.writeFile(tmpConfigPath, Yaml.dump(this.recursive ? config.toRecursiveHash(true) : config.toHash(true), { lineWidth: 120 }), 'utf8');
         this.context.stdout.write(Chalk.yellow('Editing the config is an advanced feature. BE CAREFUL!\n'));
         // await executeVscode(['--wait', '-r', tmpConfigPath], { cwd: config.path, stdout: this.context.stdout });
         await executeEditor(tmpConfigPath, { defaultEditor: settings.defaultEditor, wait: true, cwd: config.path, stdout: this.context.stdout });

@@ -507,6 +507,14 @@ export type Artifact = {
     branch: string;
     hotfix: Hotfix;
     uri: string;
+} | {
+    type: 'support.develop';
+    branch: string;
+    support: Support;
+} | {
+    type: 'support.master';
+    branch: string;
+    support: Support;
 };
 
 export type Element = {
@@ -539,11 +547,13 @@ export interface BranchStatus {
     commitsBehind: number;
 }
 
-export type ConfigParams = Pick<Config, 'identifier' | 'upstreams' | 'submodules' | 'features' | 'releases' | 'hotfixes' | 'supports' | 'included' | 'excluded'> & Partial<Pick<Config, 'featureMessageTemplate' | 'releaseMessageTemplate' | 'hotfixMessageTemplate' | 'releaseTagTemplate' | 'hotfixTagTemplate' | 'isNew' | 'managed' | 'version' | 'tags' | 'integrations' | 'commitMessageTemplates' | 'tagTemplates' | 'masterBranchName' | 'developBranchName' | 'dependencies'>>;
+export type ConfigParams = Pick<Config, 'identifier' | 'upstreams' | 'submodules' | 'features' | 'releases' | 'hotfixes' | 'supports' | 'included' | 'excluded'> & Partial<Pick<Config, 'apiVersion' | 'featureMessageTemplate' | 'releaseMessageTemplate' | 'hotfixMessageTemplate' | 'releaseTagTemplate' | 'hotfixTagTemplate' | 'isNew' | 'managed' | 'developVersion' | 'masterVersion' | 'tags' | 'integrations' | 'commitMessageTemplates' | 'tagTemplates' | 'masterBranchName' | 'developBranchName' | 'dependencies'>>;
 export class Config {
+    public apiVersion?: string;
     public identifier: string;
     public managed: boolean;
-    public version?: string;
+    public developVersion?: string;
+    public masterVersion?: string;
     public upstreams: Array<{ name: string, url: string }>;
     public submodules: Submodule[];
     public features: Feature[];
@@ -647,7 +657,10 @@ export class Config {
             tags: value.tags?.slice() ?? [],
             integrations: value.integrations?.map(i => Integration.fromSchema(i)),
             commitMessageTemplates: value.commitMessageTemplates?.map(i => MessageTemplate.fromSchema(i)),
-            tagTemplates: value.tagTemplates?.map(i => TagTemplate.fromSchema(i))
+            tagTemplates: value.tagTemplates?.map(i => TagTemplate.fromSchema(i)),
+
+            developVersion: value.developVersion ?? value.version,
+            masterVersion: value.masterVersion ?? value.version
         });
 
         return config;
@@ -671,6 +684,7 @@ export class Config {
     }
 
     public constructor(params: ConfigParams) {
+        this.apiVersion = params.apiVersion;
         this.identifier = params.identifier;
         this.upstreams = params.upstreams;
         this.submodules = params.submodules;
@@ -688,7 +702,8 @@ export class Config {
 
         this.isNew = params.isNew ?? false;
         this.managed = params.managed ?? true;
-        this.version = params.version;
+        this.developVersion = params.developVersion;
+        this.masterVersion = params.masterVersion;
 
         this.tags = params.tags ?? [];
 
@@ -810,6 +825,14 @@ export class Config {
             const hotfix = this.hotfixes.find(f => f.branchName === branchName)
             if (hotfix)
                 return { type: 'hotfix', branch: branchName, uri: hotfix.uri, hotfix };
+
+            const masterSupport = this.supports.find(f => f.masterBranchName === branchName)
+            if (masterSupport)
+                return { type: 'support.master', branch: branchName, support: masterSupport };
+
+            const developSupport = this.supports.find(f => f.developBranchName === branchName)
+            if (developSupport)
+                return { type: 'support.develop', branch: branchName, support: developSupport };
 
             return { type: 'unknown', branch: branchName }
         }
@@ -1664,11 +1687,11 @@ export class Config {
             this.#baseHash = baseHash;
     }
 
-    public toRecursiveHash(): Zod.infer<typeof RecursiveConfigSchema> {
+    public toRecursiveHash(stampApiVersion = false): Zod.infer<typeof RecursiveConfigSchema> {
         return {
-            ...this.toHash(),
-            submodules: this.submodules.length ? this.submodules.map(s => s.toRecursiveHash()) : undefined
-        }
+            ...this.toHash(stampApiVersion),
+            submodules: this.submodules.length ? this.submodules.map(s => s.toRecursiveHash(stampApiVersion)) : undefined,
+        };
     }
 
     // public toJSON() {
@@ -1739,11 +1762,57 @@ export class Config {
         return cleanups;
     }
 
-    public async setVersion(version: string | null, { stdout, dryRun }: ExecParams = {}) {
-        const oldVersion = this.version ? Semver.clean(this.version) : null;
+    public async resolveCurrentArtifactVersion(fallback: boolean = false) {
+        const currentArtifact = await this.resolveCurrentArtifact();
+        switch (currentArtifact.type) {
+            case 'develop':
+                return this.resolveVersion('develop') ?? (fallback ? this.resolveVersion('master') : undefined);
+            case 'master':
+                return this.resolveVersion('master');
+            case 'feature':
+                return currentArtifact.feature.resolveVersion() ?? (fallback ? (currentArtifact.feature.parentSupport ? currentArtifact.feature.parentSupport : this).resolveVersion('develop') : undefined);
+            case 'release':
+                return currentArtifact.release.resolveVersion() ?? (fallback ? (currentArtifact.release.parentSupport ? currentArtifact.release.parentSupport : this).resolveVersion('develop') : undefined);
+            case 'hotfix':
+                return currentArtifact.hotfix.resolveVersion() ?? (fallback ? (currentArtifact.hotfix.parentSupport ? currentArtifact.hotfix.parentSupport : this).resolveVersion('develop') : undefined);
+            case 'support.develop':
+                return currentArtifact.support.resolveVersion('develop');
+            case 'support.master':
+                return currentArtifact.support.resolveVersion('master');
+            default:
+                throw new Error(`Unsupported artifact type ${currentArtifact.type} [${currentArtifact.branch}]`);
+        }
+    }
+    public async setCurrentArtifactVersion(version: string | null, { ...execParams }: ExecParams = {}) {
+        const currentArtifact = await this.resolveCurrentArtifact();
+        switch (currentArtifact.type) {
+            case 'develop':
+                return this.setVersion('develop', version, execParams);
+            case 'master':
+                return this.setVersion('master', version, execParams);
+            case 'feature':
+                return currentArtifact.feature.setVersion(version, execParams);
+            case 'release':
+                return currentArtifact.release.setVersion(version, execParams);
+            case 'hotfix':
+                return currentArtifact.hotfix.setVersion(version, execParams);
+            case 'support.develop':
+                return currentArtifact.support.setVersion('develop', version, execParams);
+            case 'support.master':
+                return currentArtifact.support.setVersion('master', version, execParams);
+            default:
+                throw new Error(`Unsupported artifact type ${currentArtifact.type} [${currentArtifact.branch}]`);
+        }
+    }
+
+    public async setVersion(type: 'develop' | 'master', version: string | null, { stdout, dryRun }: ExecParams = {}) {
+        const versionTarget = type === 'develop' ? 'developVersion' : 'masterVersion';
+        const currentVersion = this[versionTarget];
+
+        const oldVersion = currentVersion ? Semver.clean(currentVersion) : null;
 
         if (version) {
-            this.version = `v${version}`;
+            this[versionTarget] = `v${version}`;
 
             for (const integration of this.integrations) {
                 const plugin = await integration.loadPlugin();
@@ -1755,7 +1824,7 @@ export class Config {
             }
         }
         else {
-            delete this.version;
+            delete this[versionTarget];
         }
 
         if (this.parentConfig) {
@@ -1953,21 +2022,22 @@ export class Submodule {
         return config;
     }
 
-    public toRecursiveHash(): Zod.infer<typeof RecursiveConfigSubmoduleSchema> {
+    public toRecursiveHash(stampApiVersion = false): Zod.infer<typeof RecursiveConfigSubmoduleSchema> {
         return {
             ...this.toHash(),
-            config: this.config.toRecursiveHash()
-        }
+            config: this.config.toRecursiveHash(stampApiVersion)
+        };
     }
 }
 export interface Submodule extends SubmoduleBase {}
 applyMixins(Submodule, [ SubmoduleBase ]);
 
-export type FeatureParams = Pick<Feature, 'name' | 'branchName' | 'sourceSha' | 'upstream'> & Partial<Pick<Feature, 'tags'>>;
+export type FeatureParams = Pick<Feature, 'name' | 'branchName' | 'sourceSha' | 'upstream'> & Partial<Pick<Feature, 'tags' | 'version'>>;
 export class Feature {
     public name: string;
     public branchName: string;
     public sourceSha: string;
+    public version?: string;
     public upstream?: string;
     public tags: Tagging[];
 
@@ -2012,6 +2082,7 @@ export class Feature {
         this.name = params.name;
         this.branchName = params.branchName;
         this.sourceSha = params.sourceSha;
+        this.version = params.version;
         this.upstream = params.upstream;
         this.tags = params.tags ?? [];
 
@@ -2060,15 +2131,46 @@ export class Feature {
     public swapCheckout<T>(handler: () => T | Promise<T>, { stdout, dryRun }: ExecParams = {}) {
         return this.parentConfig.swapCheckout(this.branchName, handler, { stdout, dryRun });
     }
+
+    public async setVersion(version: string | null, { stdout, dryRun }: ExecParams = {}) {
+        const oldVersion = this.version ? Semver.clean(this.version) : null;
+
+        if (version) {
+            this.version = `v${version}`;
+
+            for (const integration of this.parentConfig.integrations) {
+                const plugin = await integration.loadPlugin();
+                await plugin.updateVersion?.(oldVersion, version, {
+                    config: this.parentConfig,
+                    stdout,
+                    dryRun
+                });
+            }
+        }
+        else {
+            delete this.version;
+        }
+
+        if (this.parentConfig.parentConfig) {
+            let rootConfig = this.parentConfig.parentConfig;
+            while (rootConfig?.parentConfig)
+                rootConfig = rootConfig.parentConfig;
+
+            return rootConfig.flattenConfigs().filter(c => c.dependencies.indexOf(this.parentConfig.identifier) >= 0);
+        }
+
+        return [];
+    }
 }
 export interface Feature extends FeatureBase {}
 applyMixins(Feature, [ FeatureBase ]);
 
-export type ReleaseParams = Pick<Release, 'name' | 'branchName' | 'sourceSha' | 'upstream'> & Partial<Pick<Release, 'intermediate' | 'tags'>>;
+export type ReleaseParams = Pick<Release, 'name' | 'branchName' | 'sourceSha' | 'upstream'> & Partial<Pick<Release, 'intermediate' | 'tags' | 'version'>>;
 export class Release {
     public name: string;
     public branchName: string;
     public sourceSha: string;
+    public version?: string;
     public upstream?: string;
     public intermediate: boolean;
     public tags: Tagging[];
@@ -2114,6 +2216,7 @@ export class Release {
         this.name = params.name;
         this.branchName = params.branchName;
         this.sourceSha = params.sourceSha;
+        this.version = params.version;
         this.upstream = params.upstream;
         this.intermediate = params.intermediate ?? false;
         this.tags = params.tags ??[];
@@ -2165,15 +2268,46 @@ export class Release {
     public resolveTagTemplate() {
         return _.template(this.parentConfig.releaseTagTemplate ?? '<%= releaseName %>');
     }
+
+    public async setVersion(version: string | null, { stdout, dryRun }: ExecParams = {}) {
+        const oldVersion = this.version ? Semver.clean(this.version) : null;
+
+        if (version) {
+            this.version = `v${version}`;
+
+            for (const integration of this.parentConfig.integrations) {
+                const plugin = await integration.loadPlugin();
+                await plugin.updateVersion?.(oldVersion, version, {
+                    config: this.parentConfig,
+                    stdout,
+                    dryRun
+                });
+            }
+        }
+        else {
+            delete this.version;
+        }
+
+        if (this.parentConfig.parentConfig) {
+            let rootConfig = this.parentConfig.parentConfig;
+            while (rootConfig?.parentConfig)
+                rootConfig = rootConfig.parentConfig;
+
+            return rootConfig.flattenConfigs().filter(c => c.dependencies.indexOf(this.parentConfig.identifier) >= 0);
+        }
+
+        return [];
+    }
 }
 export interface Release extends ReleaseBase {}
 applyMixins(Release, [ ReleaseBase ]);
 
-export type HotfixParams = Pick<Hotfix, 'name' | 'branchName' | 'sourceSha' | 'upstream'> & Partial<Pick<Hotfix, 'intermediate' | 'tags'>>;
+export type HotfixParams = Pick<Hotfix, 'name' | 'branchName' | 'sourceSha' | 'upstream'> & Partial<Pick<Hotfix, 'intermediate' | 'tags' | 'version'>>;
 export class Hotfix {
     public name: string;
     public branchName: string;
     public sourceSha: string;
+    public version?: string;
     public upstream?: string;
     public intermediate: boolean;
     public tags: Tagging[];
@@ -2219,6 +2353,7 @@ export class Hotfix {
         this.name = params.name;
         this.branchName = params.branchName;
         this.sourceSha = params.sourceSha;
+        this.version = params.version;
         this.upstream = params.upstream;
         this.intermediate = params.intermediate ?? false;
         this.tags = params.tags ??[];
@@ -2270,16 +2405,48 @@ export class Hotfix {
     public resolveTagTemplate() {
         return _.template(this.parentConfig.hotfixTagTemplate ?? '<%= hotfixName %>');
     }
+
+    public async setVersion(version: string | null, { stdout, dryRun }: ExecParams = {}) {
+        const oldVersion = this.version ? Semver.clean(this.version) : null;
+
+        if (version) {
+            this.version = `v${version}`;
+
+            for (const integration of this.parentConfig.integrations) {
+                const plugin = await integration.loadPlugin();
+                await plugin.updateVersion?.(oldVersion, version, {
+                    config: this.parentConfig,
+                    stdout,
+                    dryRun
+                });
+            }
+        }
+        else {
+            delete this.version;
+        }
+
+        if (this.parentConfig.parentConfig) {
+            let rootConfig = this.parentConfig.parentConfig;
+            while (rootConfig?.parentConfig)
+                rootConfig = rootConfig.parentConfig;
+
+            return rootConfig.flattenConfigs().filter(c => c.dependencies.indexOf(this.parentConfig.identifier) >= 0);
+        }
+
+        return [];
+    }
 }
 export interface Hotfix extends HotfixBase {}
 applyMixins(Hotfix, [ HotfixBase ]);
 
-export type SupportParams = Pick<Support, 'name' | 'masterBranchName' | 'developBranchName' | 'sourceSha' | 'features' | 'releases' | 'hotfixes' | 'upstream'>;
+export type SupportParams = Pick<Support, 'name' | 'masterBranchName' | 'developBranchName' | 'sourceSha' | 'features' | 'releases' | 'hotfixes' | 'upstream'> & Partial<Pick<Support, 'masterVersion' | 'developVersion'>>;
 export class Support {
     public name: string;
     public masterBranchName: string;
     public developBranchName: string;
     public sourceSha: string;
+    public developVersion?: string;
+    public masterVersion?: string;
     public upstream?: string;
 
     public features: Feature[];
@@ -2320,6 +2487,8 @@ export class Support {
         this.masterBranchName = params.masterBranchName;
         this.developBranchName = params.developBranchName;
         this.sourceSha = params.sourceSha;
+        this.masterVersion = params.masterVersion;
+        this.developVersion = params.developVersion;
         this.upstream = params.upstream;
 
         this.features = params.features;
@@ -2400,6 +2569,39 @@ export class Support {
 
         const idx = this.hotfixes.indexOf(hotfix);
         this.hotfixes.splice(idx, 1);
+    }
+
+    public async setVersion(type: 'develop' | 'master', version: string | null, { stdout, dryRun }: ExecParams = {}) {
+        const versionTarget = type === 'develop' ? 'developVersion' : 'masterVersion';
+        const currentVersion = this[versionTarget];
+
+        const oldVersion = currentVersion ? Semver.clean(currentVersion) : null;
+
+        if (version) {
+            this[versionTarget] = `v${version}`;
+
+            for (const integration of this.parentConfig.integrations) {
+                const plugin = await integration.loadPlugin();
+                await plugin.updateVersion?.(oldVersion, version, {
+                    config: this.parentConfig,
+                    stdout,
+                    dryRun
+                });
+            }
+        }
+        else {
+            delete this[versionTarget];
+        }
+
+        if (this.parentConfig.parentConfig) {
+            let rootConfig = this.parentConfig.parentConfig;
+            while (rootConfig?.parentConfig)
+                rootConfig = rootConfig.parentConfig;
+
+            return rootConfig.flattenConfigs().filter(c => c.dependencies.indexOf(this.parentConfig.identifier) >= 0);
+        }
+
+        return [];
     }
 }
 export interface Support extends SupportBase {}
