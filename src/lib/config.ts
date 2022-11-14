@@ -392,6 +392,9 @@ export async function loadV2Config(uri: string, settings: Settings, { cwd, paren
         verify
     }, parentConfig, parentSubmodule, pathspecPrefix);
 
+    config.submodules.push(...await config.loadShadowSubmodules({
+        verify
+    }));
     config.features.push(...await config.loadShadowFeatures());
     config.releases.push(...await config.loadShadowReleases());
     config.hotfixes.push(...await config.loadShadowHotfixes());
@@ -1790,6 +1793,20 @@ export class Config {
         return this.developBranchName ?? 'develop';
     }
 
+    public async loadShadowSubmodules(loadRepoParams: Pick<LoadRepoConfigParams, 'verify'>) {
+        const submodulesPath = Path.join(this.path, '.glf', 'shadow-submodules');
+        if (!await FS.pathExists(submodulesPath))
+            return [];
+
+        return Bluebird.map(FS.readdir(submodulesPath), file => 
+            FS.readFile(Path.join(submodulesPath, file), 'utf8')
+                .then(content => JSON.parse(content))
+                .then(hash => Submodule.parse(hash, true))
+                .then(async submodule => {
+                    await submodule.register(this, loadRepoParams);
+                    return submodule;
+                }));
+    }
     public async loadShadowFeatures() {
         const featuresPath = Path.join(this.path, '.glf', 'shadow-features');
         if (!await FS.pathExists(featuresPath))
@@ -1844,6 +1861,8 @@ export class Submodule {
     public url?: string;
     public tags: string[];
 
+    public readonly shadow: boolean;
+
     #initialized: boolean = false;
 
     #config!: Config;
@@ -1862,21 +1881,23 @@ export class Submodule {
         return this.#parentConfig;
     }
 
-    public static parse(value: unknown) {
-        return this.fromSchema(ConfigSubmoduleSchema.parse(value));
+    public static parse(value: unknown, shadow?: boolean) {
+        return this.fromSchema(ConfigSubmoduleSchema.parse(value), shadow);
     }
-    public static fromSchema(value: Zod.infer<typeof ConfigSubmoduleSchema>) {
+    public static fromSchema(value: Zod.infer<typeof ConfigSubmoduleSchema>, shadow?: boolean) {
         return new this({
             ...value,
             tags: value.tags?.slice() ?? []
-        });
+        }, shadow);
     }
 
-    public constructor(params: SubmoduleParams) {
+    public constructor(params: SubmoduleParams, shadow?: boolean) {
         this.name = params.name;
         this.path = params.path;
         this.url = params.url;
         this.tags = params.tags ?? [];
+
+        this.shadow = shadow ?? false;
     }
 
     public async register(parentConfig: Config, loadRepoParams: Pick<LoadRepoConfigParams, 'verify'>) {

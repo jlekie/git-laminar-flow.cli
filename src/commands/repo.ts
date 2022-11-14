@@ -1345,6 +1345,14 @@ export class IncrementVersionCommand extends BaseInteractiveCommand {
                 answerType: OverridablePromptAnswerTypes.StringArray,
                 defaultValue: targetConfigs.map(c => c.identifier)
             }),
+            cascadeConfigs: async ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()).parse(value), (initial) => ({
+                type: 'multiselect',
+                message: 'Select Cascaded Modules',
+                choices: configs.map(c => ({ title: `${c.pathspec} [${c.resolveVersion()}]`, value: c.identifier, selected: initial?.some(tc => tc === c.identifier) }))
+            }), {
+                answerType: OverridablePromptAnswerTypes.StringArray,
+                defaultValue: configs.map(c => c.identifier)
+            }),
             type: ({ config }) => this.createOverridablePrompt(`${config.pathspec}/type`, value => Zod.union([ Zod.literal('major'), Zod.literal('minor'), Zod.literal('patch'), Zod.literal('prerelease'), Zod.literal('premajor'), Zod.literal('preminor'), Zod.literal('prepatch') ]).parse(value), initial => ({
                 type: 'select',
                 message: `[${Chalk.magenta(config.pathspec)}] Release Type`,

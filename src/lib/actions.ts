@@ -1356,11 +1356,13 @@ export async function incrementVersion(rootConfig: Config, { stdout, dryRun, ...
     type: ActionParam<Semver.ReleaseType, { config: Config }>;
     prereleaseIdentifier: ActionParam<string, { config: Config }>;
     cascade?: ActionParam<boolean>;
+    cascadeConfigs: ActionParam<Config[], { configs: Config[] }>;
 }>) {
     const allConfigs = rootConfig.flattenConfigs().filter(c => c.managed);
     const configs = await params.configs({ configs: allConfigs });
     // const type = await params.type();
     const cascade = await params.cascade?.() ?? false;
+    const cascadedConfigs = cascade ? await params.cascadeConfigs({ configs: resolveDependants(configs, allConfigs) }) : [];
 
     // const prereleaseIdentifier = await (async () => {
     //     switch (type) {
@@ -1374,7 +1376,7 @@ export async function incrementVersion(rootConfig: Config, { stdout, dryRun, ...
 
     await Bluebird.mapSeries(Bluebird.mapSeries([
         ...configs,
-        ...(cascade ? resolveDependants(configs, allConfigs) : [])
+        ...cascadedConfigs
     ], async config => {
         const type = await params.type({ config });
         const prereleaseIdentifier = await (async () => {
