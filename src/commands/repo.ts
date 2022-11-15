@@ -158,6 +158,7 @@ export class CommitCommand extends BaseInteractiveCommand {
     exclude = Option.Array('--exclude');
 
     stageAll = Option.Boolean('--stage-all');
+    message = Option.String('--message');
 
     static usage = Command.Usage({
         description: 'Commit'
@@ -192,7 +193,7 @@ export class CommitCommand extends BaseInteractiveCommand {
                 initial
             }), {
                 // pathspecPrefix: config.pathspec,
-                defaultValue: 'checkpoint'
+                defaultValue: this.message ?? 'checkpoint'
             }),
             stage: ({ config }) => this.createOverridablePrompt('stage', value => Zod.boolean().parse(value), {
                 type: 'confirm',
@@ -1156,54 +1157,54 @@ export class OpenWorkspaceCommand extends BaseInteractiveCommand {
     }
 }
 
-export class GenerateSolutionCommand extends BaseInteractiveCommand {
-    static paths = [['vs', 'create', 'solution']];
+// export class GenerateSolutionCommand extends BaseInteractiveCommand {
+//     static paths = [['vs', 'create', 'solution']];
 
-    include = Option.Array('--include');
-    exclude = Option.Array('--exclude');
+//     include = Option.Array('--include');
+//     exclude = Option.Array('--exclude');
 
-    static usage = Command.Usage({
-        description: 'Create a new solution from repo checkouts',
-        category: "Visual Studio"
-    });
+//     static usage = Command.Usage({
+//         description: 'Create a new solution from repo checkouts',
+//         category: "Visual Studio"
+//     });
 
-    public async executeCommand() {
-        const rootConfig = await this.loadConfig();
-        const allConfigs = rootConfig.flattenConfigs();
-        const targetConfigs = await rootConfig.resolveFilteredConfigs({
-            included: this.include,
-            excluded: this.exclude
-        });
+//     public async executeCommand() {
+//         const rootConfig = await this.loadConfig();
+//         const allConfigs = rootConfig.flattenConfigs();
+//         const targetConfigs = await rootConfig.resolveFilteredConfigs({
+//             included: this.include,
+//             excluded: this.exclude
+//         });
 
-        const solutionName = await this.createOverridablePrompt('name', value => Zod.string().nonempty().parse(value), {
-            type: 'text',
-            message: 'Solution Name'
-        });
-        const solutionPath = Path.resolve(rootConfig.path, `${solutionName}.sln`);
+//         const solutionName = await this.createOverridablePrompt('name', value => Zod.string().nonempty().parse(value), {
+//             type: 'text',
+//             message: 'Solution Name'
+//         });
+//         const solutionPath = Path.resolve(rootConfig.path, `${solutionName}.sln`);
 
-        const configs = await this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => allConfigs.find(c => c.identifier === id)).compact().value()).parse(value), (initial) => ({
-            type: 'multiselect',
-            message: 'Select Modules',
-            choices: allConfigs.map(c => ({ title: c.pathspec, value: c.identifier, selected: initial?.some(tc => tc === c.identifier) }))
-        }), {
-            defaultValue: targetConfigs.map(c => c.identifier)
-        });
+//         const configs = await this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => allConfigs.find(c => c.identifier === id)).compact().value()).parse(value), (initial) => ({
+//             type: 'multiselect',
+//             message: 'Select Modules',
+//             choices: allConfigs.map(c => ({ title: c.pathspec, value: c.identifier, selected: initial?.some(tc => tc === c.identifier) }))
+//         }), {
+//             defaultValue: targetConfigs.map(c => c.identifier)
+//         });
 
-        if (await FS.pathExists(solutionPath)) {
-            this.logWarning(`Solution already exists at ${solutionPath}, cannot override`);
-            return;
-        }
+//         if (await FS.pathExists(solutionPath)) {
+//             this.logWarning(`Solution already exists at ${solutionPath}, cannot override`);
+//             return;
+//         }
 
-        await rootConfig.exec(`dotnet new sln -n ${solutionName}`, { stdout: this.context.stdout, dryRun: this.dryRun });
+//         await rootConfig.exec(`dotnet new sln -n ${solutionName}`, { stdout: this.context.stdout, dryRun: this.dryRun });
 
-        for (const config of configs) {
-            const relativePath = Path.relative(rootConfig.path, config.path);
+//         for (const config of configs) {
+//             const relativePath = Path.relative(rootConfig.path, config.path);
 
-            this.logVerbose(`Adding ${config.pathspec} to solution`);
-            await rootConfig.exec(`dotnet sln ${solutionName}.sln add --in-root ${relativePath}`, { stdout: this.context.stdout, dryRun: this.dryRun });
-        }
-    }
-}
+//             this.logVerbose(`Adding ${config.pathspec} to solution`);
+//             await rootConfig.exec(`dotnet sln ${solutionName}.sln add --in-root ${relativePath}`, { stdout: this.context.stdout, dryRun: this.dryRun });
+//         }
+//     }
+// }
 
 export class ViewVersionCommand extends BaseInteractiveCommand {
     static paths = [['version', 'view']];

@@ -31,7 +31,7 @@ cli.register(RepoCommands.ResetStateCommand);
 cli.register(RepoCommands.CommitCommand);
 cli.register(RepoCommands.CreateWorkspaceCommand);
 cli.register(RepoCommands.OpenWorkspaceCommand);
-cli.register(RepoCommands.GenerateSolutionCommand);
+// cli.register(RepoCommands.GenerateSolutionCommand);
 cli.register(RepoCommands.ViewVersionCommand);
 cli.register(RepoCommands.SetVersionCommand);
 cli.register(RepoCommands.IncrementVersionCommand);
