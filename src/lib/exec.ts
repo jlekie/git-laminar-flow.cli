@@ -14,6 +14,7 @@ export interface ExecOptions {
     stdout?: Stream.Writable;
     dryRun?: boolean;
     echo?: boolean;
+    retries?: number;
 }
 export interface InputOptions {
     cwd?: string;

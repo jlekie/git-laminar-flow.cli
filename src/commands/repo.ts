@@ -30,6 +30,7 @@ export class InitCommand extends BaseCommand {
     parallelism = Option.String('--parallelism', { validator: Typanion.isNumber() });
 
     target = Option.String('--target');
+    support = Option.String('--support');
 
     // writeGitmodules = Option.Boolean('--write-gitmodules');
 
@@ -48,9 +49,16 @@ export class InitCommand extends BaseCommand {
         for await (const configGroup of iterateTopologicallyNonMapped(targetConfigs, (item, parent) => item.parentConfig === parent))
             configGroups.push(configGroup);
 
-        for (const configGroup of configGroups)
+        for (const configGroup of configGroups) {
             await Bluebird.map(configGroup, async config => {
                 await config.init({ stdout: this.context.stdout, dryRun: this.dryRun, writeGitmdoulesConfig: true });
+
+                if (this.support) {
+                    const support = await config.trySetActiveSupport(this.support);
+
+                    if (support && !this.target)
+                        config.checkoutBranch(support.developBranchName, { stdout: this.context.stdout, dryRun: this.dryRun });
+                }
 
                 if (this.target) {
                     if (!await config.hasElement(this.target))
@@ -87,6 +95,7 @@ export class InitCommand extends BaseCommand {
                     await config.checkoutBranch(fromBranch, { stdout: this.context.stdout, dryRun: this.dryRun });
                 }
             }, this.parallelism ? { concurrency: this.parallelism } : undefined);
+        }
 
         // for (const config of targetConfigs)
         //     await config.init({ stdout: this.context.stdout, dryRun: this.dryRun });
@@ -1278,6 +1287,8 @@ export class SetVersionCommand extends BaseInteractiveCommand {
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');
 
+    version = Option.String('--version');
+
     static usage = Command.Usage({
         description: 'Set version',
         category: 'Version'
@@ -1303,7 +1314,10 @@ export class SetVersionCommand extends BaseInteractiveCommand {
                 type: 'text',
                 message: `[${Chalk.magenta(config.pathspec)}] Version`,
                 initial
-            })),
+            }), {
+                defaultValue: this.version,
+                interactivity: 2
+            }),
             stdout: this.context.stdout,
             dryRun: this.dryRun
         });

@@ -49,7 +49,7 @@ export class CreateInteractiveCommand extends BaseInteractiveCommand {
                 initial
             }), {
                 pathspecPrefix: config.pathspec,
-                defaultValue: activeSupport ? `support://${activeSupport}/develop` : 'branch://develop',
+                defaultValue: activeSupport ? `support://${activeSupport.name}/develop` : 'branch://develop',
                 interactivity: 2
             }),
             branchName: ({ config, fromElement, releaseName }) => this.createOverridablePrompt('branchName', value => Zod.string().parse(value), (initial) => ({

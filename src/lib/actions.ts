@@ -57,7 +57,7 @@ async function resolveFromArtifacts(config: Config, from: string) {
 export async function createFeature(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
     name: ActionParam<string>;
     configs: ActionParam<Config[], { configs: Config[] }>;
-    from?: ActionParam<string, { config: Config, activeSupport?: string }>;
+    from?: ActionParam<string, { config: Config, activeSupport?: Support }>;
     branchName: ActionParam<string, { config: Config, fromElement: Element, featureName: string }>;
     checkout?: ActionParam<boolean, { config: Config }>;
     upstream?: ActionParam<string | undefined, { config: Config }>;
@@ -69,7 +69,7 @@ export async function createFeature(rootConfig: Config, { stdout, dryRun, ...par
     const configs = await params.configs({ configs: allConfigs });
 
     await Bluebird.map(Bluebird.mapSeries(configs, async config => {
-        const activeSupport = await config.getStateValue('activeSupport', 'string');
+        const activeSupport = await config.resolveActiveSupport();
         const from = await params.from?.({ config, activeSupport }) ?? 'branch://develop';
         const [ fromElement, fromBranch ] = await resolveFromArtifacts(config, from);
 
@@ -110,7 +110,7 @@ export async function createFeature(rootConfig: Config, { stdout, dryRun, ...par
 export async function createRelease(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
     name: ActionParam<string>;
     configs: ActionParam<Config[], { configs: Config[] }>;
-    from?: ActionParam<string, { config: Config, activeSupport?: string }>;
+    from?: ActionParam<string, { config: Config, activeSupport?: Support }>;
     branchName: ActionParam<string, { config: Config, fromElement: Element, releaseName: string }>;
     checkout?: ActionParam<boolean, { config: Config }>;
     intermediate?: ActionParam<boolean | undefined, { config: Config }>;
@@ -123,7 +123,7 @@ export async function createRelease(rootConfig: Config, { stdout, dryRun, ...par
     const configs = await params.configs({ configs: allConfigs });
 
     await Bluebird.map(Bluebird.mapSeries(configs, async config => {
-        const activeSupport = await config.getStateValue('activeSupport', 'string');
+        const activeSupport = await config.resolveActiveSupport();
         const from = await params.from?.({ config, activeSupport }) ?? 'branch://develop';
         const [ fromElement, fromBranch ] = await resolveFromArtifacts(config, from);
 
@@ -197,7 +197,7 @@ export async function createRelease(rootConfig: Config, { stdout, dryRun, ...par
 export async function createHotfix(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
     name: ActionParam<string>;
     configs: ActionParam<Config[], { configs: Config[] }>;
-    from?: ActionParam<string, { config: Config, activeSupport?: string }>;
+    from?: ActionParam<string, { config: Config, activeSupport?: Support }>;
     branchName: ActionParam<string, { config: Config, fromElement: Element, hotfixName: string }>;
     checkout?: ActionParam<boolean, { config: Config }>;
     intermediate?: ActionParam<boolean | undefined, { config: Config }>;
@@ -214,8 +214,7 @@ export async function createHotfix(rootConfig: Config, { stdout, dryRun, ...para
             continue;
         }
 
-        const activeSupport = await config.getStateValue('activeSupport', 'string');
-
+        const activeSupport = await config.resolveActiveSupport();
         const from = await params.from?.({ config, activeSupport }) ?? 'branch://develop';
         const [ fromElement, fromBranch ] = await resolveFromArtifacts(config, from);
 
@@ -256,7 +255,7 @@ export async function createSupport(rootConfig: Config, { stdout, dryRun, ...par
     const allConfigs = rootConfig.flattenConfigs().filter(c => c.managed);
     const configs = await params.configs({ configs: allConfigs });
 
-    await Bluebird.map(Bluebird.mapSeries(configs, async config => ({
+    await Bluebird.mapSeries(Bluebird.mapSeries(configs, async config => ({
         config,
         masterBranchName: await params.masterBranchName({ config, supportName }),
         developBranchName: await params.developBranchName({ config, supportName }),
@@ -288,15 +287,45 @@ export async function createSupport(rootConfig: Config, { stdout, dryRun, ...par
         await support.init({ stdout: stdout, dryRun: dryRun });
         await config.save({ stdout: stdout, dryRun: dryRun });
 
-        if (checkout === 'develop')
-            await config.checkoutBranch(support.developBranchName, { stdout: stdout, dryRun: dryRun });
-        else if (checkout === 'master')
-            await config.checkoutBranch(support.masterBranchName, { stdout: stdout, dryRun: dryRun });
+        // if (checkout === 'develop')
+        //     await config.checkoutBranch(support.developBranchName, { stdout: stdout, dryRun: dryRun, retries: 3 });
+        // else if (checkout === 'master')
+        //     await config.checkoutBranch(support.masterBranchName, { stdout: stdout, dryRun: dryRun, retries: 3 });
 
         if (activate)
             await config.setStateValue('activeSupport', supportName);
     });
 }
+
+// export async function syncSupport(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
+//     name: ActionParam<string, { supports: string[] }>;
+//     configs: ActionParam<Config[], { configs: Config[] }>;
+// }>) {
+//     const supports = await Bluebird.map(rootConfig.flattenConfigs(), config => config.supports)
+//         .then(supports => _(supports).flatten().map(r => r.name).uniq().value());
+
+//     const supportName = await params.name({ supports });
+
+//     const allConfigs = await Bluebird.filter(rootConfig.flattenConfigs(), c => c.hasElement(`support://${supportName}`));
+//     if (!allConfigs.length)
+//         return;
+    
+//     const configs = await params.configs({ configs: allConfigs });
+//     for (const config of configs) {
+//         const { support } = await config.findElement('support', supportName);
+
+//         if (await config.resolveCurrentBranch({ stdout, dryRun }) === support.branchName)
+//             await config.checkoutBranch(config.resolveDevelopBranchName(), { stdout, dryRun });
+
+//         if (await config.branchExists(feature.branchName, { stdout, dryRun }))
+//             await config.deleteBranch(feature.branchName, { stdout, dryRun });
+
+//         if (!dryRun)
+//             await (feature.parentSupport ?? feature.parentConfig).deleteFeature(feature);
+
+//         await config.save({ stdout: stdout, dryRun: dryRun });
+//     }
+// }
 
 export async function deleteFeature(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
     name: ActionParam<string, { features: string[] }>;
@@ -570,8 +599,12 @@ export async function closeRelease(rootConfig: Config, { stdout, dryRun, ...para
     stagedFiles?: ActionParam<string[], { config: Config, statuses: Awaited<ReturnType<Config['resolveStatuses']>> }>;
     tags?: ActionParam<TagTemplate[], { config: Config, templates: TagTemplate[] }>;
 }>) {
-    const releases = await Bluebird.map(rootConfig.flattenConfigs(), config => config.releases)
-        .then(releases => _(releases).flatten().map(r => r.name).uniq().value());
+    const releases = await Bluebird.map(rootConfig.flattenConfigs(), async config => {
+            const support = await config.resolveActiveSupport();
+
+            return support ? support.releases : config.releases;
+        })
+        .then(releases => _(releases).flatten().map(r => r.parentSupport ? `${r.parentSupport.name}/${r.name}` : r.name).uniq().value());
 
     const releaseName = await params.name({ releases });
 
@@ -749,16 +782,16 @@ export async function closeRelease(rootConfig: Config, { stdout, dryRun, ...para
                 try {
                     const version = release.resolveVersion();
                     if (version) {
-                        const developVersion = await config.resolveVersion('develop');
+                        const developVersion = await (release.parentSupport ?? config).resolveVersion('develop');
                         if (developVersion && Semver.lt(version, developVersion))
                             throw new Error(`Release version (${version}) is less than the develop version (${developVersion})`);
 
-                        const masterVersion = await config.resolveVersion('master');
+                        const masterVersion = await (release.parentSupport ?? config).resolveVersion('master');
                         if (masterVersion && Semver.lt(version, masterVersion))
                             throw new Error(`Release version (${version}) is less than the master version (${masterVersion})`);
 
-                        await config.setVersion('develop', version, { stdout, dryRun });
-                        await config.setVersion('master', version, { stdout, dryRun })
+                        await (release.parentSupport ?? config).setVersion('develop', version, { stdout, dryRun });
+                        await (release.parentSupport ?? config).setVersion('master', version, { stdout, dryRun })
                     }
 
                     await config.checkoutBranch(release.parentSupport?.developBranchName ?? config.resolveDevelopBranchName(), { stdout, dryRun });
@@ -1228,13 +1261,22 @@ export async function sync(rootConfig: Config, { stdout, dryRun, ...params }: Ac
         const features = await Bluebird
             .map(config.features, feature => feature.upstream ? config.resolveBranchStatus(feature.branchName, feature.upstream, { stdout }) : undefined)
             .then(s => _.compact(s));
+        const supports = [
+            ...await Bluebird
+                .map(config.supports, support => support.upstream ? config.resolveBranchStatus(support.masterBranchName, develop.upstream, { stdout }) : undefined)
+                .then(s => _.compact(s)),
+            ...await Bluebird
+                .map(config.supports, support => support.upstream ? config.resolveBranchStatus(support.developBranchName, develop.upstream, { stdout }) : undefined)
+                .then(s => _.compact(s))
+        ];
 
         return {
             identifier: config.identifier,
             master,
             develop,
             features,
-            applicable: master.differs || develop.differs || features.some(f => f.differs)
+            supports,
+            applicable: master.differs || develop.differs || features.some(f => f.differs) || supports.some(s => s.differs)
         };
     }).then(statuses => _(statuses).compact().keyBy(s => s.identifier).value());
 
@@ -1270,6 +1312,8 @@ export async function sync(rootConfig: Config, { stdout, dryRun, ...params }: Ac
 
             for (const feature of status.features)
                 await processStatus(feature);
+            for (const support of status.supports)
+                await processStatus(support);
         }, { concurrency: 1 });
     }
 }

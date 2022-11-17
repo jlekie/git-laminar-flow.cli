@@ -399,6 +399,12 @@ export async function loadV2Config(uri: string, settings: Settings, { cwd, paren
     config.releases.push(...await config.loadShadowReleases());
     config.hotfixes.push(...await config.loadShadowHotfixes());
 
+    for (const support of config.supports) {
+        support.features.push(...await support.loadShadowFeatures());
+        support.releases.push(...await support.loadShadowReleases());
+        support.hotfixes.push(...await support.loadShadowHotfixes());
+    }
+
     verify && await config.verify({ stdout, dryRun });
 
     return config;
@@ -782,6 +788,9 @@ export class Config {
                 else if (type === 'hotfix') {
                     return artifact.type === 'hotfix' && Minimatch(artifact.hotfix.name, pattern);
                 }
+                else if (type === 'support') {
+                    return (artifact.type === 'support.develop' || artifact.type === 'support.master') && Minimatch(artifact.support.name, pattern);
+                }
                 else if (type === 'tag') {
                     const tags = [ ...this.tags, ...(this.parentSubmodule?.tags ?? []) ];
                     return tags.some(tag => Minimatch(tag, pattern));
@@ -834,6 +843,20 @@ export class Config {
             if (developSupport)
                 return { type: 'support.develop', branch: branchName, support: developSupport };
 
+            for (const support of this.supports) {
+                const feature = support.features.find(f => f.branchName === branchName)
+                if (feature)
+                    return { type: 'feature', branch: branchName, uri: feature.uri, feature };
+    
+                const release = support.releases.find(f => f.branchName === branchName)
+                if (release)
+                    return { type: 'release', branch: branchName, uri: release.uri, release };
+    
+                const hotfix = support.hotfixes.find(f => f.branchName === branchName)
+                if (hotfix)
+                    return { type: 'hotfix', branch: branchName, uri: hotfix.uri, hotfix };
+            }
+
             return { type: 'unknown', branch: branchName }
         }
     }
@@ -847,7 +870,7 @@ export class Config {
 
         if (fromElement.type !== type)
             throw new Error(`Element type mismatch [${fromElement.type} / ${type}]`);
-    
+
         return fromElement as NarrowedElement<Element, T>;
     }
 
@@ -883,7 +906,7 @@ export class Config {
             return { type: 'repo', config };
         }
         else if (type === 'feature') {
-            const parts = value.split(':');
+            const parts = value.split('/');
 
             if (parts.length === 2) {
                 const support = this.supports.find(s => s.name === parts[0]);
@@ -905,7 +928,7 @@ export class Config {
             }
         }
         else if (type === 'release') {
-            const parts = value.split(':');
+            const parts = value.split('/');
 
             if (parts.length === 2) {
                 const support = this.supports.find(s => s.name === parts[0]);
@@ -927,7 +950,7 @@ export class Config {
             }
         }
         else if (type === 'hotfix') {
-            const parts = value.split(':');
+            const parts = value.split('/');
 
             if (parts.length === 2) {
                 const support = this.supports.find(s => s.name === parts[0]);
@@ -1441,21 +1464,39 @@ export class Config {
 
         if (!dryRun) {
             await FS.emptyDir(Path.join(this.path, '.glf', 'shadow-features'));
+            await FS.emptyDir(Path.join(this.path, '.glf', 'shadow-releases'));
+            await FS.emptyDir(Path.join(this.path, '.glf', 'shadow-hotfixes'));
+
             for (const feature of this.features.filter(f => f.shadow)) {
                 const featurePath = Path.join(this.path, '.glf', 'shadow-features', `${feature.name}.json`);
                 await FS.outputJson(featurePath, feature.toHash(), 'utf8');
             }
 
-            await FS.emptyDir(Path.join(this.path, '.glf', 'shadow-releases'));
             for (const release of this.releases.filter(f => f.shadow)) {
                 const releasePath = Path.join(this.path, '.glf', 'shadow-releases', `${release.name}.json`);
                 await FS.outputJson(releasePath, release.toHash(), 'utf8');
             }
 
-            await FS.emptyDir(Path.join(this.path, '.glf', 'shadow-hotfixes'));
             for (const hotfix of this.hotfixes.filter(f => f.shadow)) {
                 const hotfixPath = Path.join(this.path, '.glf', 'shadow-hotfixes', `${hotfix.name}.json`);
                 await FS.outputJson(hotfixPath, hotfix.toHash(), 'utf8');
+            }
+
+            for (const support of this.supports) {
+                for (const feature of support.features.filter(f => f.shadow)) {
+                    const featurePath = Path.join(this.path, '.glf', 'shadow-features', support.name, `${feature.name}.json`);
+                    await FS.outputJson(featurePath, feature.toHash(), 'utf8');
+                }
+    
+                for (const release of support.releases.filter(f => f.shadow)) {
+                    const releasePath = Path.join(this.path, '.glf', 'shadow-releases', support.name, `${release.name}.json`);
+                    await FS.outputJson(releasePath, release.toHash(), 'utf8');
+                }
+    
+                for (const hotfix of support.hotfixes.filter(f => f.shadow)) {
+                    const hotfixPath = Path.join(this.path, '.glf', 'shadow-hotfixes', support.name, `${hotfix.name}.json`);
+                    await FS.outputJson(hotfixPath, hotfix.toHash(), 'utf8');
+                }
             }
         }
     }
@@ -1672,13 +1713,6 @@ export class Config {
         return result;
     }
 
-    public async resolveActiveSupport() {
-        const activeSupportName = await this.getStateValue('activeSupport', 'string');
-        const activeSupport = activeSupportName ? this.supports.find(s => s.name === activeSupportName) : undefined;
-
-        return activeSupport;
-    }
-
     public migrateSource({ sourceUri, baseHash }: { sourceUri?: string, baseHash?: string } = {}) {
         if (sourceUri)
             this.#sourceUri = sourceUri;
@@ -1881,7 +1915,7 @@ export class Config {
         if (!await FS.pathExists(featuresPath))
             return [];
 
-        return Bluebird.map(FS.readdir(featuresPath), file => 
+        return Bluebird.map((await FS.readdir(featuresPath, { withFileTypes: true })).filter(f => f.isFile()).map(f => f.name), file => 
             FS.readFile(Path.join(featuresPath, file), 'utf8')
                 .then(content => JSON.parse(content))
                 .then(hash => Feature.parse(hash, true))
@@ -1895,7 +1929,7 @@ export class Config {
         if (!await FS.pathExists(releasesPath))
             return [];
 
-        return Bluebird.map(FS.readdir(releasesPath), file => 
+        return Bluebird.map((await FS.readdir(releasesPath, { withFileTypes: true })).filter(f => f.isFile()).map(f => f.name), file => 
             FS.readFile(Path.join(releasesPath, file), 'utf8')
                 .then(content => JSON.parse(content))
                 .then(hash => Release.parse(hash, true))
@@ -1909,7 +1943,7 @@ export class Config {
         if (!await FS.pathExists(hotfixesPath))
             return [];
 
-        return Bluebird.map(FS.readdir(hotfixesPath), file => 
+        return Bluebird.map((await FS.readdir(hotfixesPath, { withFileTypes: true })).filter(f => f.isFile()).map(f => f.name), file => 
             FS.readFile(Path.join(hotfixesPath, file), 'utf8')
                 .then(content => JSON.parse(content))
                 .then(hash => Hotfix.parse(hash, true))
@@ -1917,6 +1951,27 @@ export class Config {
                     await hotfix.register(this);
                     return hotfix;
                 }));
+    }
+
+    public async trySetActiveSupport(supportName: string) {
+        const support = this.supports.find(s => s.name === supportName);
+        if (!support)
+            return;
+
+        await this.setStateValue('activeSupport', supportName);
+
+        return support;
+    }
+    public async resolveActiveSupport() {
+        const supportName = await this.getStateValue('activeSupport', 'string');
+        if (!supportName)
+            return;
+
+        const support = this.supports.find(s => s.name === supportName);
+        if (!support)
+            throw new Error(`Support ${supportName} not defined`);
+
+        return support;
     }
 }
 
@@ -2602,6 +2657,49 @@ export class Support {
         }
 
         return [];
+    }
+
+    public async loadShadowFeatures() {
+        const featuresPath = Path.join(this.parentConfig.path, '.glf', 'shadow-features', this.name);
+        if (!await FS.pathExists(featuresPath))
+            return [];
+
+        return Bluebird.map((await FS.readdir(featuresPath, { withFileTypes: true })).filter(f => f.isFile()).map(f => f.name), file => 
+            FS.readFile(Path.join(featuresPath, file), 'utf8')
+                .then(content => JSON.parse(content))
+                .then(hash => Feature.parse(hash, true))
+                .then(async feature => {
+                    await feature.register(this.parentConfig, this);
+                    return feature;
+                }));
+    }
+    public async loadShadowReleases() {
+        const releasesPath = Path.join(this.parentConfig.path, '.glf', 'shadow-releases', this.name);
+        if (!await FS.pathExists(releasesPath))
+            return [];
+
+        return Bluebird.map((await FS.readdir(releasesPath, { withFileTypes: true })).filter(f => f.isFile()).map(f => f.name), file => 
+            FS.readFile(Path.join(releasesPath, file), 'utf8')
+                .then(content => JSON.parse(content))
+                .then(hash => Release.parse(hash, true))
+                .then(async release => {
+                    await release.register(this.parentConfig, this);
+                    return release;
+                }));
+    }
+    public async loadShadowHotfixes() {
+        const hotfixesPath = Path.join(this.parentConfig.path, '.glf', 'shadow-hotfixes', this.name);
+        if (!await FS.pathExists(hotfixesPath))
+            return [];
+
+        return Bluebird.map((await FS.readdir(hotfixesPath, { withFileTypes: true })).filter(f => f.isFile()).map(f => f.name), file => 
+            FS.readFile(Path.join(hotfixesPath, file), 'utf8')
+                .then(content => JSON.parse(content))
+                .then(hash => Hotfix.parse(hash, true))
+                .then(async hotfix => {
+                    await hotfix.register(this.parentConfig, this);
+                    return hotfix;
+                }));
     }
 }
 export interface Support extends SupportBase {}

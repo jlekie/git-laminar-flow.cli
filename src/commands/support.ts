@@ -116,6 +116,108 @@ export class CreateInteractiveCommand extends BaseInteractiveCommand {
         });
     }
 }
+export class SyncCommand extends BaseInteractiveCommand {
+    static paths = [['support', 'create'], ['create', 'support']];
+
+    include = Option.Array('--include');
+    exclude = Option.Array('--exclude');
+
+    supportName = Option.String('--name');
+
+    static usage = Command.Usage({
+        description: 'Create support',
+        category: 'Support'
+    });
+
+    public async executeCommand() {
+        const rootConfig = await this.loadConfig();
+        const targetConfigs = await rootConfig.resolveFilteredConfigs({
+            included: this.include,
+            excluded: this.exclude
+        });
+
+        await createSupport(rootConfig, {
+            name: () => this.createOverridablePrompt('supportName', value => Zod.string().nonempty().parse(value), initial => ({
+                type: 'text',
+                message: 'Support Name',
+                initial
+            }), {
+                defaultValue: this.supportName
+            }),
+            from: ({ config }) => this.createOverridablePrompt('from', value => Zod.string().url().parse(value), (initial) => ({
+                type: 'text',
+                message: `[${Chalk.magenta(config.pathspec)}] From`,
+                initial
+            }), {
+                pathspecPrefix: config.pathspec,
+                defaultValue: 'branch://master',
+                interactivity: 2
+            }),
+            masterBranchName: ({ config, supportName }) => this.createOverridablePrompt('masterBranchName', value => Zod.string().parse(value), (initial) => ({
+                type: 'text',
+                message: `[${Chalk.magenta(config.pathspec)}] Master Branch Name`,
+                initial
+            }), {
+                pathspecPrefix: config.pathspec,
+                defaultValue: `support/${supportName}/master`,
+                interactivity: 2
+            }),
+            developBranchName: ({ config, supportName }) => this.createOverridablePrompt('developBranchName', value => Zod.string().parse(value), (initial) => ({
+                type: 'text',
+                message: `[${Chalk.magenta(config.pathspec)}] Develop Branch Name`,
+                initial
+            }), {
+                pathspecPrefix: config.pathspec,
+                defaultValue: `support/${supportName}/develop`,
+                interactivity: 2
+            }),
+            configs: async ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()).parse(value), (initial) => ({
+                type: 'multiselect',
+                message: 'Select Modules',
+                choices: configs.map(c => ({ title: c.pathspec, value: c.identifier, selected: initial?.some(tc => tc === c.identifier) }))
+            }), {
+                defaultValue: targetConfigs.map(c => c.identifier)
+            }),
+            checkout: ({ config }) => this.createOverridablePrompt('checkout', value => Zod.union([ Zod.literal('master'), Zod.literal('develop') ]).nullable().optional().parse(value), initial => ({
+                type: 'select',
+                message: `[${Chalk.magenta(config.pathspec)}] Checkout`,
+                choices: [
+                    { title: 'N/A', value: null },
+                    { title: 'Master', value: 'master' },
+                    { title: 'Develop', value: 'develop' }
+                ],
+                initial: initial ? [ null, 'master', 'develop' ].indexOf(initial) : 0
+            }), {
+                pathspecPrefix: config.pathspec,
+                defaultValue: 'develop',
+                interactivity: 2
+            }),
+            activate: ({ config }) => this.createOverridablePrompt('activate', value => Zod.boolean().parse(value), {
+                type: 'confirm',
+                message: `[${Chalk.magenta(config.pathspec)}] Activate`
+            }, {
+                pathspecPrefix: config.pathspec,
+                defaultValue: true,
+                interactivity: 2
+            }),
+            upstream: ({ config }) => this.createOverridablePrompt('upstream', value => Zod.string().nullable().transform(v => v ?? undefined).parse(value), (initial) => ({
+                type: 'select',
+                message: `[${Chalk.magenta(config.pathspec)}] Upstream`,
+                choices: [
+                    { title: 'N/A', value: null },
+                    ...config.upstreams.map(u => ({ title: u.name, value: u.name }))
+                ],
+                initial: config.upstreams.findIndex(u => u.name === initial) + 1
+            }), {
+                pathspecPrefix: config.pathspec,
+                defaultValue: config.upstreams[0]?.name ?? null,
+                interactivity: 2
+            }),
+            stdout: this.context.stdout,
+            dryRun: this.dryRun
+        });
+    }
+}
 export class CreateCommand extends BaseCommand {
     static paths = [['support', 'create']];
 
