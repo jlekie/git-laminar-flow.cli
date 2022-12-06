@@ -287,17 +287,20 @@ export class DeleteInteractiveCommand extends BaseInteractiveCommand {
 }
 
 export class ActivateCommand extends BaseCommand {
-    static paths = [['support', 'set-active']];
+    static paths = [
+        ['support', 'set-active'],
+        ['support', 'set']
+    ];
 
-    name = Option.String('--name', { required: true });
+    name = Option.String('--name');
 
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');
 
-    checkout = Option.String('--checkout');
+    checkout = Option.String('--checkout', { tolerateBoolean: true });
 
     static usage = Command.Usage({
-        description: 'Create support',
+        description: 'Set active support',
         category: 'Support'
     });
 
@@ -308,19 +311,21 @@ export class ActivateCommand extends BaseCommand {
             excluded: this.exclude
         });
 
-        const featureFqn = config.resolveFeatureFqn(this.name);
-
         for (const config of targetConfigs) {
-            const support = config.supports.find(f => f.name === featureFqn)
-            if (!support)
-                continue;
+            const support = await config.trySetActiveSupport(this.name);
 
-            await config.setStateValue('activeSupport', featureFqn);
-
-            if (this.checkout === 'develop')
-                await config.checkoutBranch(support.developBranchName, { stdout: this.context.stdout, dryRun: this.dryRun });
-            else if (this.checkout === 'master')
-                await config.checkoutBranch(support.masterBranchName, { stdout: this.context.stdout, dryRun: this.dryRun });
+            if (support) {
+                if (this.checkout === true || this.checkout === 'develop')
+                    await config.checkoutBranch(support.developBranchName, { stdout: this.context.stdout, dryRun: this.dryRun });
+                else if (this.checkout === 'master')
+                    await config.checkoutBranch(support.masterBranchName, { stdout: this.context.stdout, dryRun: this.dryRun });
+            }
+            else {
+                if (this.checkout === true || this.checkout === 'develop')
+                    await config.checkoutBranch(config.resolveDevelopBranchName(), { stdout: this.context.stdout, dryRun: this.dryRun });
+                else if (this.checkout === 'master')
+                    await config.checkoutBranch(config.resolveMasterBranchName(), { stdout: this.context.stdout, dryRun: this.dryRun });
+            }
         }
     }
 }

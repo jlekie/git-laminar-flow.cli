@@ -45,57 +45,103 @@ export class InitCommand extends BaseCommand {
             excluded: this.exclude
         });
 
-        const configGroups = [];
-        for await (const configGroup of iterateTopologicallyNonMapped(targetConfigs, (item, parent) => item.parentConfig === parent))
-            configGroups.push(configGroup);
+        await Bluebird.map(targetConfigs, async config => config.init({ stdout: this.context.stdout, dryRun: this.dryRun, writeGitmdoulesConfig: true }), this.parallelism ? { concurrency: this.parallelism } : undefined);
 
-        for (const configGroup of configGroups) {
-            await Bluebird.map(configGroup, async config => {
-                await config.init({ stdout: this.context.stdout, dryRun: this.dryRun, writeGitmdoulesConfig: true });
+        await Bluebird.mapSeries(targetConfigs, async config => {
+            if (this.support) {
+                const support = await config.trySetActiveSupport(this.support);
 
-                if (this.support) {
-                    const support = await config.trySetActiveSupport(this.support);
+                if (support && !this.target)
+                    config.checkoutBranch(support.developBranchName, { stdout: this.context.stdout, dryRun: this.dryRun });
+            }
 
-                    if (support && !this.target)
-                        config.checkoutBranch(support.developBranchName, { stdout: this.context.stdout, dryRun: this.dryRun });
-                }
+            if (this.target) {
+                if (!await config.hasElement(this.target))
+                    return;
 
-                if (this.target) {
-                    if (!await config.hasElement(this.target))
-                        return;
-
-                    const fromElement = await config.parseElement(this.target);
-                    const fromBranch = await (async () => {
-                        if (fromElement.type === 'branch') {
-                            if (fromElement.branch === 'develop')
-                                return config.resolveDevelopBranchName();
-                            else if (fromElement.branch === 'master')
-                                return config.resolveMasterBranchName();
-                            else
-                                return fromElement.branch;
-                        }
-                        else if (fromElement.type === 'feature')
-                            return fromElement.feature.branchName;
-                        else if (fromElement.type === 'release')
-                            return fromElement.release.branchName;
-                        else if (fromElement.type === 'hotfix')
-                            return fromElement.hotfix.branchName;
-                        else if (fromElement.type === 'support') {
-                            if (fromElement.targetBranch === 'develop')
-                                return fromElement.support.developBranchName;
-                            else if (fromElement.targetBranch === 'master')
-                                return fromElement.support.masterBranchName;
-                            else
-                                return fromElement.support.developBranchName;
-                        }
+                const fromElement = await config.parseElement(this.target);
+                const fromBranch = await (async () => {
+                    if (fromElement.type === 'branch') {
+                        if (fromElement.branch === 'develop')
+                            return config.resolveDevelopBranchName();
+                        else if (fromElement.branch === 'master')
+                            return config.resolveMasterBranchName();
                         else
-                            throw new Error(`Cannot derive source branch from ${this.target}`);
-                    })();
+                            return fromElement.branch;
+                    }
+                    else if (fromElement.type === 'feature')
+                        return fromElement.feature.branchName;
+                    else if (fromElement.type === 'release')
+                        return fromElement.release.branchName;
+                    else if (fromElement.type === 'hotfix')
+                        return fromElement.hotfix.branchName;
+                    else if (fromElement.type === 'support') {
+                        if (fromElement.targetBranch === 'develop')
+                            return fromElement.support.developBranchName;
+                        else if (fromElement.targetBranch === 'master')
+                            return fromElement.support.masterBranchName;
+                        else
+                            return fromElement.support.developBranchName;
+                    }
+                    else
+                        throw new Error(`Cannot derive source branch from ${this.target}`);
+                })();
 
-                    await config.checkoutBranch(fromBranch, { stdout: this.context.stdout, dryRun: this.dryRun });
-                }
-            }, this.parallelism ? { concurrency: this.parallelism } : undefined);
-        }
+                await config.checkoutBranch(fromBranch, { stdout: this.context.stdout, dryRun: this.dryRun });
+            }
+        });
+
+        // const configGroups = [];
+        // for await (const configGroup of iterateTopologicallyNonMapped(targetConfigs, (item, parent) => item.parentConfig === parent))
+        //     configGroups.push(configGroup);
+
+        // for (const configGroup of configGroups) {
+        //     await Bluebird.map(configGroup, async config => {
+        //         await config.init({ stdout: this.context.stdout, dryRun: this.dryRun, writeGitmdoulesConfig: true });
+
+        //         if (this.support) {
+        //             const support = await config.trySetActiveSupport(this.support);
+
+        //             if (support && !this.target)
+        //                 config.checkoutBranch(support.developBranchName, { stdout: this.context.stdout, dryRun: this.dryRun });
+        //         }
+
+        //         if (this.target) {
+        //             if (!await config.hasElement(this.target))
+        //                 return;
+
+        //             const fromElement = await config.parseElement(this.target);
+        //             const fromBranch = await (async () => {
+        //                 if (fromElement.type === 'branch') {
+        //                     if (fromElement.branch === 'develop')
+        //                         return config.resolveDevelopBranchName();
+        //                     else if (fromElement.branch === 'master')
+        //                         return config.resolveMasterBranchName();
+        //                     else
+        //                         return fromElement.branch;
+        //                 }
+        //                 else if (fromElement.type === 'feature')
+        //                     return fromElement.feature.branchName;
+        //                 else if (fromElement.type === 'release')
+        //                     return fromElement.release.branchName;
+        //                 else if (fromElement.type === 'hotfix')
+        //                     return fromElement.hotfix.branchName;
+        //                 else if (fromElement.type === 'support') {
+        //                     if (fromElement.targetBranch === 'develop')
+        //                         return fromElement.support.developBranchName;
+        //                     else if (fromElement.targetBranch === 'master')
+        //                         return fromElement.support.masterBranchName;
+        //                     else
+        //                         return fromElement.support.developBranchName;
+        //                 }
+        //                 else
+        //                     throw new Error(`Cannot derive source branch from ${this.target}`);
+        //             })();
+
+        //             await config.checkoutBranch(fromBranch, { stdout: this.context.stdout, dryRun: this.dryRun });
+        //         }
+        //     }, this.parallelism ? { concurrency: this.parallelism } : undefined);
+        // }
 
         // for (const config of targetConfigs)
         //     await config.init({ stdout: this.context.stdout, dryRun: this.dryRun });
@@ -1360,13 +1406,13 @@ export class IncrementVersionCommand extends BaseInteractiveCommand {
                 answerType: OverridablePromptAnswerTypes.StringArray,
                 defaultValue: targetConfigs.map(c => c.identifier)
             }),
-            cascadeConfigs: async ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()).parse(value), (initial) => ({
+            cascadeConfigs: async ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.map(c => c.config).find(c => c.identifier === id)).compact().value()).parse(value), (initial) => ({
                 type: 'multiselect',
                 message: 'Select Cascaded Modules',
-                choices: configs.map(c => ({ title: `${c.pathspec} [${c.resolveVersion()}]`, value: c.identifier, selected: initial?.some(tc => tc === c.identifier) }))
+                choices: configs.map(c => ({ title: `${c.config.pathspec} [${c.version}]`, value: c.config.identifier, selected: initial?.some(tc => tc === c.config.identifier) }))
             }), {
                 answerType: OverridablePromptAnswerTypes.StringArray,
-                defaultValue: configs.map(c => c.identifier)
+                defaultValue: configs.map(c => c.config.identifier)
             }),
             type: ({ config }) => this.createOverridablePrompt(`${config.pathspec}/type`, value => Zod.union([ Zod.literal('major'), Zod.literal('minor'), Zod.literal('patch'), Zod.literal('prerelease'), Zod.literal('premajor'), Zod.literal('preminor'), Zod.literal('prepatch') ]).parse(value), initial => ({
                 type: 'select',

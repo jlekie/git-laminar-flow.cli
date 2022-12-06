@@ -15,7 +15,7 @@ import * as Minimatch from 'minimatch';
 import { loadSettings } from '../lib/settings';
 import { Config, loadV2Config, getStateValue, loadState } from '../lib/config';
 import { Lazy } from '../lib/misc';
-import { ExecOptions } from 'lib/exec';
+import { ExecOptions } from '../lib/exec';
 
 let preloadedConfig: Config | null = null;
 async function resolveConfigPath(configPath?: string) {

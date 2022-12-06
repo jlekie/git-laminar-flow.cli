@@ -1441,7 +1441,7 @@ export async function incrementVersion(rootConfig: Config, { stdout, dryRun, ...
     type: ActionParam<Semver.ReleaseType, { config: Config }>;
     prereleaseIdentifier: ActionParam<string, { config: Config }>;
     cascade?: ActionParam<boolean>;
-    cascadeConfigs: ActionParam<Config[], { configs: Config[] }>;
+    cascadeConfigs: ActionParam<Config[], { configs: { config: Config, version?: string }[] }>;
 }>) {
     const allConfigs = rootConfig.flattenConfigs().filter(c => c.managed);
     const configs = await params.configs({ configs: await Bluebird.map(allConfigs, async config => ({ config, version: await config.resolveCurrentArtifactVersion(true) })) });
@@ -1449,7 +1449,7 @@ export async function incrementVersion(rootConfig: Config, { stdout, dryRun, ...
     const cascade = await params.cascade?.() ?? false;
 
     const dependantConfigs = resolveDependants(configs, allConfigs);
-    const cascadedConfigs = cascade && dependantConfigs.length > 0 ? await params.cascadeConfigs({ configs: dependantConfigs }) : [];
+    const cascadedConfigs = cascade && dependantConfigs.length > 0 ? await params.cascadeConfigs({ configs: await Bluebird.map(dependantConfigs, async config => ({ config, version: await config.resolveCurrentArtifactVersion(true) })) }) : [];
 
     // const prereleaseIdentifier = await (async () => {
     //     switch (type) {

@@ -307,7 +307,7 @@ export function setStateValue(state: State, key: string | string[], value?: Stat
 export async function loadState(statePath: string) {
     return await FS.pathExists(statePath)
         ? await FS.readFile(statePath, 'utf8')
-            .then(content => JSON.parse(content))
+            .then(content => content ? JSON.parse(content) : {})
             .then(hash => StateSchema.parse(hash))
         : {};
 }
@@ -369,7 +369,7 @@ export async function loadV2Config(uri: string, settings: Settings, { cwd, paren
                     password: glfsRepo.apiKey
                 } : undefined,
                 headers: {
-                    'glf-api-version': resolveApiVersion()
+                    'Glf-Api-Version': resolveApiVersion()
                 }
             })
                 .then(response => Config.parse(response.data))
@@ -553,7 +553,7 @@ export interface BranchStatus {
     commitsBehind: number;
 }
 
-export type ConfigParams = Pick<Config, 'identifier' | 'upstreams' | 'submodules' | 'features' | 'releases' | 'hotfixes' | 'supports' | 'included' | 'excluded'> & Partial<Pick<Config, 'apiVersion' | 'featureMessageTemplate' | 'releaseMessageTemplate' | 'hotfixMessageTemplate' | 'releaseTagTemplate' | 'hotfixTagTemplate' | 'isNew' | 'managed' | 'developVersion' | 'masterVersion' | 'tags' | 'integrations' | 'commitMessageTemplates' | 'tagTemplates' | 'masterBranchName' | 'developBranchName' | 'dependencies'>>;
+export type ConfigParams = Pick<Config, 'identifier' | 'upstreams' | 'submodules' | 'features' | 'releases' | 'hotfixes' | 'supports' | 'included' | 'excluded'> & Partial<Pick<Config, 'apiVersion' | 'featureMessageTemplate' | 'releaseMessageTemplate' | 'hotfixMessageTemplate' | 'releaseTagTemplate' | 'hotfixTagTemplate' | 'isNew' | 'managed' | 'developVersion' | 'masterVersion' | 'tags' | 'integrations' | 'commitMessageTemplates' | 'tagTemplates' | 'masterBranchName' | 'developBranchName' | 'dependencies' | 'labels'>>;
 export class Config {
     public apiVersion?: string;
     public identifier: string;
@@ -580,6 +580,7 @@ export class Config {
     public masterBranchName?: string;
     public developBranchName?: string;
     public dependencies: string[];
+    public labels: Record<string, string | string[]>;
 
     public readonly isNew: boolean;
 
@@ -722,6 +723,8 @@ export class Config {
         this.developBranchName = params.developBranchName;
 
         this.dependencies = params.dependencies ?? [];
+
+        this.labels = params.labels ?? {};
     }
 
     // Register internals (initialize)
@@ -1259,7 +1262,7 @@ export class Config {
         if (writeGitmdoulesConfig && this.submodules.length > 0)
             this.writeGitmodulesConfig({ stdout, dryRun });
 
-        for (const integration of this.integrations) {
+        for (const integration of this.resolveIntegrations()) {
             const plugin = await integration.loadPlugin();
             await plugin.init?.({
                 config: this,
@@ -1848,7 +1851,7 @@ export class Config {
         if (version) {
             this[versionTarget] = `v${version}`;
 
-            for (const integration of this.integrations) {
+            for (const integration of this.resolveIntegrations()) {
                 const plugin = await integration.loadPlugin();
                 await plugin.updateVersion?.(oldVersion, version, {
                     config: this,
@@ -1953,14 +1956,19 @@ export class Config {
                 }));
     }
 
-    public async trySetActiveSupport(supportName: string) {
-        const support = this.supports.find(s => s.name === supportName);
-        if (!support)
-            return;
+    public async trySetActiveSupport(supportName?: string) {
+        if (supportName) {
+            const support = this.supports.find(s => s.name === supportName);
+            if (!support)
+                return;
+    
+            await this.setStateValue('activeSupport', supportName);
 
-        await this.setStateValue('activeSupport', supportName);
-
-        return support;
+            return support;
+        }
+        else {
+            await this.setStateValue('activeSupport');
+        }
     }
     public async resolveActiveSupport() {
         const supportName = await this.getStateValue('activeSupport', 'string');
@@ -1973,17 +1981,32 @@ export class Config {
 
         return support;
     }
+
+    public normalizeLabels() {
+        return {
+            ..._.transform(this.labels, (memo, value, key) => memo[key] = _.isArray(value) ? value : [ value ], {} as Record<string, string[]>),
+            ...(this.parentSubmodule ? _.transform(this.parentSubmodule.labels, (memo, value, key) => memo[key] = _.isArray(value) ? value : [ value ], {} as Record<string, string[]>) : {})
+        }
+    }
+
+    public resolveIntegrations() {
+        return [
+            ...this.integrations,
+            ...this.settings.integrations
+        ];
+    }
 }
 
 export interface Config extends ConfigBase {}
 applyMixins(Config, [ ConfigBase ]);
 
-export type SubmoduleParams = Pick<Submodule, 'name' | 'path' | 'url'> & Partial<Pick<Submodule, 'tags'>>;
+export type SubmoduleParams = Pick<Submodule, 'name' | 'path' | 'url'> & Partial<Pick<Submodule, 'tags' | 'labels'>>;
 export class Submodule {
     public name: string;
     public path: string;
     public url?: string;
     public tags: string[];
+    public labels: Record<string, string | string[]>;
 
     public readonly shadow: boolean;
 
@@ -2020,6 +2043,7 @@ export class Submodule {
         this.path = params.path;
         this.url = params.url;
         this.tags = params.tags ?? [];
+        this.labels = params.labels ?? {};
 
         this.shadow = shadow ?? false;
     }

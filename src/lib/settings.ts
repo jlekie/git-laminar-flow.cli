@@ -1,9 +1,12 @@
 import * as FS from 'fs-extra';
 import * as Yaml from 'js-yaml';
+import * as Stream from 'stream';
 
 import * as Zod from 'zod';
 
-import { ConfigMessageTemplate, ConfigTagTemplate } from '@jlekie/git-laminar-flow';
+import { ConfigMessageTemplate, ConfigTagTemplate, ConfigIntegrationSchema } from '@jlekie/git-laminar-flow';
+
+import { loadPlugin } from './plugin';
 
 export const GlfsRepositorySchema = Zod.object({
     name: Zod.string(),
@@ -17,8 +20,26 @@ export const SettingsSchema = Zod.object({
     vscodeExec: Zod.string().optional(),
 
     commitMessageTemplates: ConfigMessageTemplate.array().optional(),
-    tagTemplates: ConfigTagTemplate.array().optional()
+    tagTemplates: ConfigTagTemplate.array().optional(),
+
+    integrations: ConfigIntegrationSchema.array().optional()
 });
+
+// export interface GlobalPlugin {
+//     init?(params: {
+//         stdout?: Stream.Writable
+//         dryRun?: boolean;
+//     }): void | Promise<void>;
+// }
+// export type GlobalPluginHandler = (options: Record<string, unknown>) => GlobalPlugin;
+// async function loadPlugin(moduleUri: string, options: Record<string, unknown>): Promise<GlobalPlugin> {
+//     const pluginModule = await import(moduleUri);
+
+//     if (!pluginModule.default)
+//         throw new Error('Loaded plugin has no default export');
+
+//     return pluginModule.default(options);
+// }
 
 export class Settings {
     public defaultGlfsRepository: string;
@@ -26,13 +47,16 @@ export class Settings {
     public defaultEditor?: 'vscode' | 'vscode-insiders';
     public vscodeExec?: string;
 
+    public integrations: GlobalIntegration[];
+
     public static parse(value: unknown) {
         return this.fromSchema(SettingsSchema.parse(value));
     }
     public static fromSchema(value: Zod.infer<typeof SettingsSchema>) {
         return new Settings({
             ...value,
-            glfsRepositories: value.glfsRepositories?.map(i => GlfsRepository.parse(i)) ?? []
+            glfsRepositories: value.glfsRepositories?.map(i => GlfsRepository.parse(i)) ?? [],
+            integrations: value.integrations?.map(i => GlobalIntegration.parse(i))
         });
     }
 
@@ -43,11 +67,12 @@ export class Settings {
         });
     }
 
-    public constructor(params: Pick<Settings, 'defaultGlfsRepository' | 'glfsRepositories'> & Partial<Pick<Settings, 'vscodeExec' | 'defaultEditor'>>) {
+    public constructor(params: Pick<Settings, 'defaultGlfsRepository' | 'glfsRepositories'> & Partial<Pick<Settings, 'vscodeExec' | 'defaultEditor' | 'integrations'>>) {
         this.defaultGlfsRepository = params.defaultGlfsRepository;
         this.glfsRepositories = params.glfsRepositories;
         this.defaultEditor = params.defaultEditor;
         this.vscodeExec = params.vscodeExec;
+        this.integrations = params.integrations ?? [];
     }
 
     public getDefaultRepo() {
@@ -82,6 +107,31 @@ export class GlfsRepository {
         this.name = params.name;
         this.url = params.url;
         this.apiKey = params.apiKey;
+    }
+}
+
+export type GlobalIntegrationParams = Pick<GlobalIntegration, 'plugin' | 'options'>;
+export class GlobalIntegration {
+    public plugin: string;
+    public options: Record<string, unknown>;
+
+    public static parse(value: unknown) {
+        return this.fromSchema(ConfigIntegrationSchema.parse(value));
+    }
+    public static fromSchema(value: Zod.infer<typeof ConfigIntegrationSchema>) {
+        return new this({
+            ...value,
+            options: value.options ? { ...value.options } : {}
+        });
+    }
+
+    public constructor(params: GlobalIntegrationParams) {
+        this.plugin = params.plugin;
+        this.options = params.options;
+    }
+
+    public async loadPlugin() {
+        return loadPlugin(this.plugin, this.options);
     }
 }
 
