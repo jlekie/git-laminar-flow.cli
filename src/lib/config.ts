@@ -2725,6 +2725,13 @@ export class Support {
                     return hotfix;
                 }));
     }
+
+    public resolveMasterBranchName() {
+        return this.masterBranchName;
+    }
+    public resolveDevelopBranchName() {
+        return this.developBranchName;
+    }
 }
 export interface Support extends SupportBase {}
 applyMixins(Support, [ SupportBase ]);

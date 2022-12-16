@@ -309,14 +309,14 @@ export class CloseInteractiveCommand extends BaseInteractiveCommand {
                 message: 'Release Name',
                 choices: features.map(r => ({ title: r, value: r }))
             }),
-            configs: ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.find(c => c.identifier === id)).compact().value()).parse(value), {
+            features: ({ features }) => this.createOverridablePrompt('features', value => Zod.string().array().transform(ids => _(ids).map(id => features.find(f => f.parentConfig.identifier === id)).compact().value()).parse(value), {
                 type: 'multiselect',
                 message: 'Select Modules',
-                choices: configs.map(c => ({ title: c.pathspec, value: c.identifier, selected: true }))
+                choices: features.map(f => ({ title: f.parentConfig.pathspec, value: f.parentConfig.identifier, selected: true }))
             }),
-            confirm: ({ config, message }) => this.prompt('configs', Zod.boolean(), {
+            confirm: ({ message }) => this.prompt('configs', Zod.boolean(), {
                 type: 'confirm',
-                message: `[${Chalk.magenta(config.pathspec)}] ${message}`
+                message
             }),
             abort: () => this.abort,
             deleteLocalBranch: ({ config }) => this.createOverridablePrompt('deleteLocalBranch', value => Zod.boolean().parse(value), (initial) => ({

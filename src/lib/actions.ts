@@ -446,146 +446,207 @@ export async function deleteSupport(rootConfig: Config, { stdout, dryRun, ...par
 
 export async function closeFeature(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
     name: ActionParam<string, { features: string[] }>;
-    configs: ActionParam<Config[], { configs: Config[] }>;
-    confirm?: ActionParam<boolean, { config: Config, message: string }>;
+    features: ActionParam<Feature[], { features: Feature[] }>;
+    confirm?: ActionParam<boolean, { message: string }>;
     abort: ActionParam<boolean, { config: Config }>;
     deleteLocalBranch?: ActionParam<boolean, { config: Config }>;
     deleteRemoteBranch?: ActionParam<boolean, { config: Config }>;
 }>) {
-    const features = await Bluebird.map(rootConfig.flattenConfigs(), config => config.features)
-        .then(features => _(features).flatten().map(r => r.name).uniq().value());
+    const allFeatures = _.flatMap(rootConfig.flattenConfigs(), c => c.features);
 
-    const featureName = await params.name({ features });
+    const featureName = await params.name({
+        features: _(allFeatures).map(f => f.name).uniq().value()
+    });
 
-    const allConfigs = rootConfig.flattenConfigs();
-    const applicableConfigs = await Bluebird.filter(rootConfig.flattenConfigs(), c => c.hasElement(`feature://${featureName}`));
-    if (!applicableConfigs.length)
-        return;
+    const features = await params.features({
+        features: _(allFeatures).filter(f => f.name === featureName).value()
+    });
 
-    // const parentHasFeature = (c: Config) => {
-    //     let count = 0;
-    //     if (c.features.some(f => f.name == featureName))
-    //         count++;
+    let failedMerges = [];
+    do {
+        failedMerges = await Bluebird.mapSeries(features, async feature => {
+            const config = feature.parentConfig;
 
-    //     if (c.parentConfig)
-    //         count += parentHasFeature(c.parentConfig);
+            try {
+                if (await config.getStateValue([ feature.stateKey, 'closing', 'merge' ], 'boolean')) {
+                    stdout?.write(Chalk.gray(`[${Chalk.magenta(config.pathspec)}] Feature already closed; bypassing...\n`));
+                    return;
+                }
 
-    //     return count;
-    // }
-
-    const configs = await params.configs({ configs: applicableConfigs });
-    for await (const groupedConfigs of iterateTopologicallyNonMapped(allConfigs, (item, parent) => item.parentConfig === parent, {
-        filter: c => configs.indexOf(c) >= 0
-    })) {
-        // console.log(groupedConfigs.map(c => c.pathspec))
-        // for (const config of groupedConfigs) {
-        //     console.log(config.pathspec)
-        // }
-
-        for (const config of groupedConfigs) {
-            const { feature } = await config.findElement('feature', featureName);
-
-            !dryRun && await config.setStateValue('activeClosingFeature', feature.uri);
-
-            if (!params.abort({ config })) {
                 const commitMessage = feature.resolveCommitMessageTemplate()({
                     featureName: feature.name
                 });
 
-                if (!await config.getStateValue([ feature.stateKey, 'closing', 'develop' ], 'boolean')) {
-                    if (await config.isDirty({ stdout }))
-                        throw new Error(`Cannot merge, please commit all outstanding changes`);
+                if (await config.isDirty({ stdout }))
+                    throw new Error(`Cannot merge, please commit all outstanding changes`);
 
-                    await config.checkoutBranch(feature.parentSupport?.developBranchName ?? config.resolveDevelopBranchName(), { stdout, dryRun });
-                    if (await config.isDirty({ stdout }))
-                        throw new Error(`Cannot merge, develop has uncommited or staged changes`);
-
+                await config.swapCheckout((feature.parentSupport ?? config).resolveDevelopBranchName(), async () => {
                     await config.merge(feature.branchName, { squash: true, stdout, dryRun }).catch(async err => {
                         if (await FS.pathExists(Path.join(config.path, '.git/SQUASH_MSG')))
                             await FS.writeFile(Path.join(config.path, '.git/SQUASH_MSG'), commitMessage);
 
-                        if (params.confirm) {
-                            while (await config.isMergeInProgress({ stdout }))
-                                await params.confirm?.({ config, message: 'Continue with merge' });
-                        }
-                        else {
-                            throw new Error(`Could not merge changes; ${err}`);
-                        }
+                        throw new Error(`Could not merge changes; ${err}`);
+                        // if (params.confirm) {
+                        //     while (await config.isMergeInProgress({ stdout }))
+                        //         await params.confirm?.({ config, message: 'Continue with merge' });
+                        // }
+                        // else {
+                        //     throw new Error(`Could not merge changes; ${err}`);
+                        // }
                     });
 
                     if (await config.hasStagedChanges({ stdout, dryRun }))
                         await config.commit(commitMessage, { stdout, dryRun });
+                });
 
-                    !dryRun && await config.setStateValue([ feature.stateKey, 'closing', 'develop' ], true);
-                }
+                !dryRun && await config.setStateValue([ feature.stateKey, 'closing', 'merge' ], true);
             }
+            catch (err) {
+                return { config, err };
+            }
+        }).then(v => _.compact(v));
 
-            if (await config.branchExists(feature.branchName, { stdout, dryRun }) && await params.deleteLocalBranch?.({ config }))
-                await config.deleteBranch(feature.branchName, { stdout, dryRun });
-
-            if (await config.remoteBranchExists(feature.branchName, 'origin', { stdout, dryRun }) && await params.deleteRemoteBranch?.({ config }))
-                await config.deleteRemoteBranch(feature.branchName, 'origin', { stdout, dryRun });
-
-            if (!dryRun)
-                await (feature.parentSupport ?? feature.parentConfig).deleteFeature(feature);
-
-            await config.save({ stdout: stdout, dryRun: dryRun });
+        if (failedMerges.length > 0) {
+            stdout?.write(`Errors occurred during merge\n${failedMerges.map(({ config, err }) => `  [${Chalk.magenta(config.pathspec)}] ${err.toString()}\n`)}`);
+            if (!await params.confirm?.({ message: 'Continue with merge?' }))
+                throw new Error('User aborted merge');
         }
-    }
-    // for (const config of _.orderBy(configs, c => parentHasFeature(c), 'desc')) {
-    //     if (await config.hasNestedElement(`feature://${featureName}`)) {
-    //         stdout?.write('Submodules contain unclosed feature\n');
-    //         continue;
-    //     }
+    } while (failedMerges.length > 0)
 
-    //     const { feature } = await config.findElement('feature', featureName);
+    // const features = await Bluebird.map(rootConfig.flattenConfigs(), config => config.features)
+    //     .then(features => _(features).flatten().map(r => r.name).uniq().value());
 
-    //     !dryRun && await config.setStateValue('activeClosingFeature', feature.uri);
+    // const featureName = await params.name({ features });
 
-    //     if (!params.abort({ config })) {
-    //         const commitMessage = feature.resolveCommitMessageTemplate()({
-    //             featureName: feature.name
-    //         });
+    // const allConfigs = rootConfig.flattenConfigs();
+    // const applicableConfigs = await Bluebird.filter(rootConfig.flattenConfigs(), c => c.hasElement(`feature://${featureName}`));
+    // if (!applicableConfigs.length)
+    //     return;
 
-    //         if (!await config.getStateValue([ feature.stateKey, 'closing', 'develop' ], 'boolean')) {
-    //             if (await config.isDirty({ stdout }))
-    //                 throw new Error(`Cannot merge, please commit all outstanding changes`);
+    // // const parentHasFeature = (c: Config) => {
+    // //     let count = 0;
+    // //     if (c.features.some(f => f.name == featureName))
+    // //         count++;
 
-    //             await config.checkoutBranch(feature.parentSupport?.developBranchName ?? 'develop', { stdout, dryRun });
-    //             if (await config.isDirty({ stdout }))
-    //                 throw new Error(`Cannot merge, develop has uncommited or staged changes`);
+    // //     if (c.parentConfig)
+    // //         count += parentHasFeature(c.parentConfig);
 
-    //             await config.merge(feature.branchName, { squash: true, stdout, dryRun }).catch(async err => {
-    //                 if (await FS.pathExists(Path.join(config.path, '.git/SQUASH_MSG')))
-    //                     await FS.writeFile(Path.join(config.path, '.git/SQUASH_MSG'), commitMessage);
+    // //     return count;
+    // // }
 
-    //                 if (params.confirm) {
-    //                     while (await config.isMergeInProgress({ stdout }))
-    //                         await params.confirm?.({ config, message: 'Continue with merge' });
-    //                 }
-    //                 else {
-    //                     throw new Error(`Could not merge changes; ${err}`);
-    //                 }
+    // const configs = await params.configs({ configs: applicableConfigs });
+    // for await (const groupedConfigs of iterateTopologicallyNonMapped(allConfigs, (item, parent) => item.parentConfig === parent, {
+    //     filter: c => configs.indexOf(c) >= 0
+    // })) {
+    //     // console.log(groupedConfigs.map(c => c.pathspec))
+    //     // for (const config of groupedConfigs) {
+    //     //     console.log(config.pathspec)
+    //     // }
+
+    //     for (const config of groupedConfigs) {
+    //         const { feature } = await config.findElement('feature', featureName);
+
+    //         !dryRun && await config.setStateValue('activeClosingFeature', feature.uri);
+
+    //         if (!params.abort({ config })) {
+    //             const commitMessage = feature.resolveCommitMessageTemplate()({
+    //                 featureName: feature.name
     //             });
 
-    //             if (await config.hasStagedChanges({ stdout, dryRun }))
-    //                 await config.commit(commitMessage, { stdout, dryRun });
+    //             if (!await config.getStateValue([ feature.stateKey, 'closing', 'develop' ], 'boolean')) {
+    //                 if (await config.isDirty({ stdout }))
+    //                     throw new Error(`Cannot merge, please commit all outstanding changes`);
 
-    //             !dryRun && await config.setStateValue([ feature.stateKey, 'closing', 'develop' ], true);
+    //                 await config.checkoutBranch(feature.parentSupport?.developBranchName ?? config.resolveDevelopBranchName(), { stdout, dryRun });
+    //                 if (await config.isDirty({ stdout }))
+    //                     throw new Error(`Cannot merge, develop has uncommited or staged changes`);
+
+    //                 await config.merge(feature.branchName, { squash: true, stdout, dryRun }).catch(async err => {
+    //                     if (await FS.pathExists(Path.join(config.path, '.git/SQUASH_MSG')))
+    //                         await FS.writeFile(Path.join(config.path, '.git/SQUASH_MSG'), commitMessage);
+
+    //                     if (params.confirm) {
+    //                         while (await config.isMergeInProgress({ stdout }))
+    //                             await params.confirm?.({ config, message: 'Continue with merge' });
+    //                     }
+    //                     else {
+    //                         throw new Error(`Could not merge changes; ${err}`);
+    //                     }
+    //                 });
+
+    //                 if (await config.hasStagedChanges({ stdout, dryRun }))
+    //                     await config.commit(commitMessage, { stdout, dryRun });
+
+    //                 !dryRun && await config.setStateValue([ feature.stateKey, 'closing', 'develop' ], true);
+    //             }
     //         }
+
+    //         // if (await config.branchExists(feature.branchName, { stdout, dryRun }) && await params.deleteLocalBranch?.({ config }))
+    //         //     await config.deleteBranch(feature.branchName, { stdout, dryRun });
+
+    //         // if (await config.remoteBranchExists(feature.branchName, 'origin', { stdout, dryRun }) && await params.deleteRemoteBranch?.({ config }))
+    //         //     await config.deleteRemoteBranch(feature.branchName, 'origin', { stdout, dryRun });
+
+    //         // if (!dryRun)
+    //         //     await (feature.parentSupport ?? feature.parentConfig).deleteFeature(feature);
+
+    //         await config.save({ stdout: stdout, dryRun: dryRun });
     //     }
-
-    //     if (await config.branchExists(feature.branchName, { stdout, dryRun }) && await params.deleteLocalBranch?.({ config }))
-    //         await config.deleteBranch(feature.branchName, { stdout, dryRun });
-
-    //     if (await config.remoteBranchExists(feature.branchName, 'origin', { stdout, dryRun }) && await params.deleteRemoteBranch?.({ config }))
-    //         await config.deleteRemoteBranch(feature.branchName, 'origin', { stdout, dryRun });
-
-    //     if (!dryRun)
-    //         await (feature.parentSupport ?? feature.parentConfig).deleteFeature(feature);
-
-    //     await config.save({ stdout: stdout, dryRun: dryRun });
     // }
+    // // for (const config of _.orderBy(configs, c => parentHasFeature(c), 'desc')) {
+    // //     if (await config.hasNestedElement(`feature://${featureName}`)) {
+    // //         stdout?.write('Submodules contain unclosed feature\n');
+    // //         continue;
+    // //     }
+
+    // //     const { feature } = await config.findElement('feature', featureName);
+
+    // //     !dryRun && await config.setStateValue('activeClosingFeature', feature.uri);
+
+    // //     if (!params.abort({ config })) {
+    // //         const commitMessage = feature.resolveCommitMessageTemplate()({
+    // //             featureName: feature.name
+    // //         });
+
+    // //         if (!await config.getStateValue([ feature.stateKey, 'closing', 'develop' ], 'boolean')) {
+    // //             if (await config.isDirty({ stdout }))
+    // //                 throw new Error(`Cannot merge, please commit all outstanding changes`);
+
+    // //             await config.checkoutBranch(feature.parentSupport?.developBranchName ?? 'develop', { stdout, dryRun });
+    // //             if (await config.isDirty({ stdout }))
+    // //                 throw new Error(`Cannot merge, develop has uncommited or staged changes`);
+
+    // //             await config.merge(feature.branchName, { squash: true, stdout, dryRun }).catch(async err => {
+    // //                 if (await FS.pathExists(Path.join(config.path, '.git/SQUASH_MSG')))
+    // //                     await FS.writeFile(Path.join(config.path, '.git/SQUASH_MSG'), commitMessage);
+
+    // //                 if (params.confirm) {
+    // //                     while (await config.isMergeInProgress({ stdout }))
+    // //                         await params.confirm?.({ config, message: 'Continue with merge' });
+    // //                 }
+    // //                 else {
+    // //                     throw new Error(`Could not merge changes; ${err}`);
+    // //                 }
+    // //             });
+
+    // //             if (await config.hasStagedChanges({ stdout, dryRun }))
+    // //                 await config.commit(commitMessage, { stdout, dryRun });
+
+    // //             !dryRun && await config.setStateValue([ feature.stateKey, 'closing', 'develop' ], true);
+    // //         }
+    // //     }
+
+    // //     if (await config.branchExists(feature.branchName, { stdout, dryRun }) && await params.deleteLocalBranch?.({ config }))
+    // //         await config.deleteBranch(feature.branchName, { stdout, dryRun });
+
+    // //     if (await config.remoteBranchExists(feature.branchName, 'origin', { stdout, dryRun }) && await params.deleteRemoteBranch?.({ config }))
+    // //         await config.deleteRemoteBranch(feature.branchName, 'origin', { stdout, dryRun });
+
+    // //     if (!dryRun)
+    // //         await (feature.parentSupport ?? feature.parentConfig).deleteFeature(feature);
+
+    // //     await config.save({ stdout: stdout, dryRun: dryRun });
+    // // }
 }
 
 export async function closeRelease(rootConfig: Config, { stdout, dryRun, ...params }: ActionParams<{
@@ -651,7 +712,7 @@ export async function closeRelease(rootConfig: Config, { stdout, dryRun, ...para
         }));
 
         while (configs.length > 0) {
-            const failedMerges = await Bluebird.map(configs, async (groupedConfig) => {
+            const failedMerges = await Bluebird.mapSeries(configs, async (groupedConfig) => {
                 const { config, release, commitMessageTemplate, stagedFiles } = groupedConfig;
 
                 try {
@@ -691,7 +752,7 @@ export async function closeRelease(rootConfig: Config, { stdout, dryRun, ...para
         let configs = groupedConfigs;
 
         while (configs.length > 0) {
-            const failedMerges = await Bluebird.map(configs, async (groupedConfig) => {
+            const failedMerges = await Bluebird.mapSeries(configs, async (groupedConfig) => {
                 const { config, release } = groupedConfig;
 
                 try {
@@ -729,7 +790,7 @@ export async function closeRelease(rootConfig: Config, { stdout, dryRun, ...para
         let configs = groupedConfigs;
 
         while (configs.length > 0) {
-            const failedMerges = await Bluebird.map(configs, async (groupedConfig) => {
+            const failedMerges = await Bluebird.mapSeries(configs, async (groupedConfig) => {
                 const { config, release, tagTemplates } = groupedConfig;
 
                 try {
@@ -776,7 +837,7 @@ export async function closeRelease(rootConfig: Config, { stdout, dryRun, ...para
         let configs = groupedConfigs;
 
         while (configs.length > 0) {
-            const failedMerges = await Bluebird.map(configs, async (groupedConfig) => {
+            const failedMerges = await Bluebird.mapSeries(configs, async (groupedConfig) => {
                 const { config, release, deleteLocalBranch, deleteRemoteBranch } = groupedConfig;
 
                 try {
