@@ -363,7 +363,7 @@ export async function loadV2Config(uri: string, settings: Settings, { cwd, paren
                 return matchedRepo;
             })();
 
-            return await Axios.get(`${glfsRepo.url}/v1/${glfsRepo.name}/${configRef.namespace}/${configRef.name}`, {
+            return await Axios.get(`${glfsRepo.url}/v1/${glfsRepo.name}/${configRef.namespace}/${configRef.name}${configRef.support ? `/${configRef.support}` : ''}`, {
                 auth: glfsRepo.apiKey ? {
                     username: 'glf.cli',
                     password: glfsRepo.apiKey
@@ -579,7 +579,7 @@ export class Config {
     public tagTemplates: TagTemplate[];
     public masterBranchName?: string;
     public developBranchName?: string;
-    public dependencies: string[];
+    public dependencies: (string | Record<string, string>)[];
     public labels: Record<string, string | string[]>;
 
     public readonly isNew: boolean;
@@ -1443,7 +1443,7 @@ export class Config {
             })();
 
             if (!dryRun) {
-                await Axios.put(`${glfsRepo.url}/v1/${glfsRepo.name}/${configRef.namespace}/${configRef.name}`, this.toHash(), {
+                await Axios.put(`${glfsRepo.url}/v1/${glfsRepo.name}/${configRef.namespace}/${configRef.name}${configRef.support ? `/${configRef.support}` : ''}`, this.toHash(), {
                     headers: {
                         'glf-api-version': resolveApiVersion(),
                         'if-match': this.baseHash
@@ -1869,7 +1869,7 @@ export class Config {
             while (rootConfig?.parentConfig)
                 rootConfig = rootConfig.parentConfig;
 
-            return rootConfig.flattenConfigs().filter(c => c.dependencies.indexOf(this.identifier) >= 0);
+            return rootConfig.flattenConfigs().filter(c => c.isDependent(this));
         }
 
         return [];
@@ -1994,6 +1994,17 @@ export class Config {
             ...this.integrations,
             ...this.settings.integrations
         ];
+    }
+
+    public isDependent(config: Config) {
+        const labels = config.normalizeLabels();
+
+        return this.dependencies.some(d => {
+            if (_.isString(d))
+                return config.identifier === d;
+            else
+                return _.every(d, (value, key) => labels[key]?.some(v => v === value));
+        });
     }
 }
 
@@ -2235,7 +2246,7 @@ export class Feature {
             while (rootConfig?.parentConfig)
                 rootConfig = rootConfig.parentConfig;
 
-            return rootConfig.flattenConfigs().filter(c => c.dependencies.indexOf(this.parentConfig.identifier) >= 0);
+            return rootConfig.flattenConfigs().filter(c => c.isDependent(this.parentConfig));
         }
 
         return [];
@@ -2372,7 +2383,7 @@ export class Release {
             while (rootConfig?.parentConfig)
                 rootConfig = rootConfig.parentConfig;
 
-            return rootConfig.flattenConfigs().filter(c => c.dependencies.indexOf(this.parentConfig.identifier) >= 0);
+            return rootConfig.flattenConfigs().filter(c => c.isDependent(this.parentConfig));
         }
 
         return [];
@@ -2509,7 +2520,7 @@ export class Hotfix {
             while (rootConfig?.parentConfig)
                 rootConfig = rootConfig.parentConfig;
 
-            return rootConfig.flattenConfigs().filter(c => c.dependencies.indexOf(this.parentConfig.identifier) >= 0);
+            return rootConfig.flattenConfigs().filter(c => c.isDependent(this.parentConfig));
         }
 
         return [];
@@ -2677,7 +2688,7 @@ export class Support {
             while (rootConfig?.parentConfig)
                 rootConfig = rootConfig.parentConfig;
 
-            return rootConfig.flattenConfigs().filter(c => c.dependencies.indexOf(this.parentConfig.identifier) >= 0);
+            return rootConfig.flattenConfigs().filter(c => c.isDependent(this.parentConfig));
         }
 
         return [];

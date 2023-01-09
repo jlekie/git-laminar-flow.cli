@@ -1569,7 +1569,7 @@ export async function listDependants(rootConfig: Config, { stdout, dryRun, ...pa
         };
     }), async ({ config }) => {
         stdout?.write(`${config.pathspec.toUpperCase()}\n`)
-        const dependents = allConfigs.filter(c => c.dependencies.indexOf(config.identifier) >= 0)
+        const dependents = allConfigs.filter(c => c.isDependent(config))
         for (const dependent of dependents)
             stdout?.write('  - ' + dependent.pathspec + '\n');
     });
@@ -1598,7 +1598,7 @@ function resolveDependants(configs: Config[], allConfigs: Config[]) {
     const dependentConfigs: Config[] = [];
 
     const inner = (config: Config) => {
-        for (const dependentConfig of allConfigs.filter(c => c.dependencies.indexOf(config.identifier) >= 0)) {
+        for (const dependentConfig of allConfigs.filter(c => c.isDependent(config))) {
             if (dependentConfigs.indexOf(dependentConfig) < 0 && configs.indexOf(dependentConfig) < 0) {
                 dependentConfigs.push(dependentConfig);
                 inner(dependentConfig);
