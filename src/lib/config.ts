@@ -1189,7 +1189,7 @@ export class Config {
             if (!await this.branchExists(this.resolveDevelopBranchName(), { stdout, dryRun })) {
                 if (await this.remoteBranchExists(this.resolveDevelopBranchName(), 'origin', { stdout, dryRun })) {
                     const currentBranch = await this.resolveCurrentBranch({ stdout, dryRun }).catch(() => undefined);
-                    await exec(`git checkout -b develop --track origin/develop`, { cwd: this.path, stdout, dryRun });
+                    await exec(`git checkout -b ${this.resolveDevelopBranchName()} --track origin/${this.resolveDevelopBranchName()}`, { cwd: this.path, stdout, dryRun });
                     currentBranch && await this.checkoutBranch(currentBranch, { stdout, dryRun });
                 }
                 else {
