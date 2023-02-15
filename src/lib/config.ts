@@ -553,7 +553,7 @@ export interface BranchStatus {
     commitsBehind: number;
 }
 
-export type ConfigParams = Pick<Config, 'identifier' | 'upstreams' | 'submodules' | 'features' | 'releases' | 'hotfixes' | 'supports' | 'included' | 'excluded'> & Partial<Pick<Config, 'apiVersion' | 'featureMessageTemplate' | 'releaseMessageTemplate' | 'hotfixMessageTemplate' | 'releaseTagTemplate' | 'hotfixTagTemplate' | 'isNew' | 'managed' | 'developVersion' | 'masterVersion' | 'tags' | 'integrations' | 'commitMessageTemplates' | 'tagTemplates' | 'masterBranchName' | 'developBranchName' | 'dependencies' | 'labels'>>;
+export type ConfigParams = Pick<Config, 'identifier' | 'upstreams' | 'submodules' | 'features' | 'releases' | 'hotfixes' | 'supports' | 'included' | 'excluded'> & Partial<Pick<Config, 'apiVersion' | 'featureMessageTemplate' | 'releaseMessageTemplate' | 'hotfixMessageTemplate' | 'releaseTagTemplate' | 'hotfixTagTemplate' | 'isNew' | 'managed' | 'developVersion' | 'masterVersion' | 'tags' | 'integrations' | 'commitMessageTemplates' | 'tagTemplates' | 'masterBranchName' | 'developBranchName' | 'dependencies' | 'labels' | 'annotations'>>;
 export class Config {
     public apiVersion?: string;
     public identifier: string;
@@ -581,6 +581,7 @@ export class Config {
     public developBranchName?: string;
     public dependencies: (string | Record<string, string>)[];
     public labels: Record<string, string | string[]>;
+    public annotations: Record<string, string>;
 
     public readonly isNew: boolean;
 
@@ -725,6 +726,7 @@ export class Config {
         this.dependencies = params.dependencies ?? [];
 
         this.labels = params.labels ?? {};
+        this.annotations = params.annotations ?? {};
     }
 
     // Register internals (initialize)
@@ -881,10 +883,19 @@ export class Config {
         const [ type, value ] = ElementSchema.parse(uri.split('://', 2));
 
         if (type === 'branch') {
-            if (!await this.branchExists(value))
+            const branchName = (() => {
+                if (value === 'master')
+                    return this.resolveMasterBranchName();
+                else if (value === 'develop')
+                    return this.resolveDevelopBranchName();
+                else
+                    return value;
+            })();
+
+            if (!await this.branchExists(branchName))
                 throw new Error(`Branch ${value} does not exist`);
 
-            return { type: 'branch', branch: value };
+            return { type: 'branch', branch: branchName };
         }
         else if (type === 'repo') {
             const parts = value.split('/');
@@ -1988,6 +1999,12 @@ export class Config {
             ...(this.parentSubmodule ? _.transform(this.parentSubmodule.labels, (memo, value, key) => memo[key] = _.isArray(value) ? value : [ value ], {} as Record<string, string[]>) : {})
         }
     }
+    public normalizeAnnotations() {
+        return {
+            ...this.annotations,
+            ...(this.parentSubmodule ? this.parentSubmodule.annotations : {})
+        }
+    }
 
     public resolveIntegrations() {
         return [
@@ -2011,13 +2028,14 @@ export class Config {
 export interface Config extends ConfigBase {}
 applyMixins(Config, [ ConfigBase ]);
 
-export type SubmoduleParams = Pick<Submodule, 'name' | 'path' | 'url'> & Partial<Pick<Submodule, 'tags' | 'labels'>>;
+export type SubmoduleParams = Pick<Submodule, 'name' | 'path' | 'url'> & Partial<Pick<Submodule, 'tags' | 'labels' | 'annotations'>>;
 export class Submodule {
     public name: string;
     public path: string;
     public url?: string;
     public tags: string[];
     public labels: Record<string, string | string[]>;
+    public annotations: Record<string, string>;
 
     public readonly shadow: boolean;
 
@@ -2055,6 +2073,7 @@ export class Submodule {
         this.url = params.url;
         this.tags = params.tags ?? [];
         this.labels = params.labels ?? {};
+        this.annotations = params.annotations ?? {};
 
         this.shadow = shadow ?? false;
     }
