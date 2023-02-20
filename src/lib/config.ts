@@ -553,6 +553,17 @@ export interface BranchStatus {
     commitsBehind: number;
 }
 
+export interface ConfigContextHash {
+    identifier: string;
+    labels: Record<string, string[]>;
+    annotations: Record<string, unknown>;
+    submodules: SubmoduleContextHash[];
+}
+export interface SubmoduleContextHash {
+    name: string;
+    config: ConfigContextHash;
+}
+
 export type ConfigParams = Pick<Config, 'identifier' | 'upstreams' | 'submodules' | 'features' | 'releases' | 'hotfixes' | 'supports' | 'included' | 'excluded'> & Partial<Pick<Config, 'apiVersion' | 'featureMessageTemplate' | 'releaseMessageTemplate' | 'hotfixMessageTemplate' | 'releaseTagTemplate' | 'hotfixTagTemplate' | 'isNew' | 'managed' | 'developVersion' | 'masterVersion' | 'tags' | 'integrations' | 'commitMessageTemplates' | 'tagTemplates' | 'masterBranchName' | 'developBranchName' | 'dependencies' | 'labels' | 'annotations'>>;
 export class Config {
     public apiVersion?: string;
@@ -581,7 +592,7 @@ export class Config {
     public developBranchName?: string;
     public dependencies: (string | Record<string, string>)[];
     public labels: Record<string, string | string[]>;
-    public annotations: Record<string, string>;
+    public annotations: Record<string, unknown>;
 
     public readonly isNew: boolean;
 
@@ -1269,10 +1280,6 @@ export class Config {
             // await this.save({ stdout, dryRun });
         }
 
-        // Update .gitmodules config with submodules
-        if (writeGitmdoulesConfig && this.submodules.length > 0)
-            this.writeGitmodulesConfig({ stdout, dryRun });
-
         for (const integration of this.resolveIntegrations()) {
             const plugin = await integration.loadPlugin();
             await plugin.init?.({
@@ -1281,6 +1288,10 @@ export class Config {
                 dryRun
             });
         }
+
+        // Update .gitmodules config with submodules
+        if (writeGitmdoulesConfig && this.submodules.length > 0)
+            this.writeGitmodulesConfig({ stdout, dryRun });
 
         const sourceUriPath = Path.join(this.path, '.glf', 'source_uri');
         await FS.outputFile(sourceUriPath, this.sourceUri, {
@@ -1742,6 +1753,15 @@ export class Config {
         };
     }
 
+    public toContextHash(): ConfigContextHash {
+        return {
+            ...this.toHash(),
+            labels: this.normalizeLabels(),
+            annotations: this.normalizeAnnotations(),
+            submodules: this.submodules.map(s => s.toContextHash())
+        }
+    }
+
     // public toJSON() {
     //     return {
     //         identifier: this.identifier,
@@ -2035,7 +2055,7 @@ export class Submodule {
     public url?: string;
     public tags: string[];
     public labels: Record<string, string | string[]>;
-    public annotations: Record<string, string>;
+    public annotations: Record<string, unknown>;
 
     public readonly shadow: boolean;
 
@@ -2136,6 +2156,13 @@ export class Submodule {
             ...this.toHash(),
             config: this.config.toRecursiveHash(stampApiVersion)
         };
+    }
+
+    public toContextHash(): SubmoduleContextHash {
+        return {
+            ...this.toHash(),
+            config: this.config.toContextHash()
+        }
     }
 }
 export interface Submodule extends SubmoduleBase {}
