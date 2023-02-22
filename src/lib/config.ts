@@ -1252,8 +1252,7 @@ export class Config {
             //     this.createUpstream('origin', this.parentSubmodule.url, { stdout, dryRun });
 
             // Initialize submodules
-            for (const submodule of this.submodules)
-                await submodule.init({ stdout, dryRun });
+            await Bluebird.map(this.submodules, submodule => submodule.init({ stdout, dryRun }));
             // const addedSubmodules = await Bluebird.map(this.submodules, submodule => submodule.init({ stdout, dryRun }).then(r => ({ submodule, ...r })), { concurrency: 1 }).filter(s => s.submoduleAdded);
             // if (addedSubmodules.length > 0 && await this.hasStagedChanges({ stdout, dryRun })) {
             //     // await this.stage(['.gitmodules', ...addedSubmodules.map(s => s.submodule.path) ], { stdout, dryRun, force: true });
@@ -2113,7 +2112,7 @@ export class Submodule {
     }
 
     public async init({ stdout, dryRun }: ExecParams = {}) {
-        // await this.config.init({ stdout, dryRun });
+        await this.config.init({ stdout, dryRun });
 
         // const relativePath = Path.relative(this.parentConfig.path, this.config.path);
 

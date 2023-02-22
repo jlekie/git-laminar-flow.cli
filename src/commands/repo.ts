@@ -45,7 +45,9 @@ export class InitCommand extends BaseCommand {
             excluded: this.exclude
         });
 
-        await Bluebird.map(targetConfigs, async config => config.init({ stdout: this.context.stdout, dryRun: this.dryRun, writeGitmdoulesConfig: true }), this.parallelism ? { concurrency: this.parallelism } : undefined);
+        await config.init({ stdout: this.context.stdout, dryRun: this.dryRun, writeGitmdoulesConfig: true });
+
+        // await Bluebird.map(targetConfigs, async config => config.init({ stdout: this.context.stdout, dryRun: this.dryRun, writeGitmdoulesConfig: true }), this.parallelism ? { concurrency: this.parallelism } : undefined);
 
         await Bluebird.mapSeries(targetConfigs, async config => {
             if (this.support) {
