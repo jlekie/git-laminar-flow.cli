@@ -27,7 +27,10 @@ export class InitCommand extends BaseCommand {
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');
 
-    parallelism = Option.String('--parallelism', { validator: Typanion.isNumber() });
+    parallelism = Option.String('--parallelism,--concurrency', {
+        validator: Typanion.isNumber(),
+        description: 'Max number of concurrent submodule initializations'
+    });
 
     target = Option.String('--target');
     support = Option.String('--support');
@@ -45,8 +48,7 @@ export class InitCommand extends BaseCommand {
             excluded: this.exclude
         });
 
-        await config.init({ stdout: this.context.stdout, dryRun: this.dryRun, writeGitmdoulesConfig: true });
-
+        await config.init({ stdout: this.context.stdout, dryRun: this.dryRun, writeGitmdoulesConfig: true, submoduleParallelism: this.parallelism });
         // await Bluebird.map(targetConfigs, async config => config.init({ stdout: this.context.stdout, dryRun: this.dryRun, writeGitmdoulesConfig: true }), this.parallelism ? { concurrency: this.parallelism } : undefined);
 
         await Bluebird.mapSeries(targetConfigs, async config => {

@@ -1129,7 +1129,7 @@ export class Config {
     }
 
     // Initialize the config and its associated repo
-    public async init({ stdout, dryRun, writeGitmdoulesConfig }: ExecParams & { writeGitmdoulesConfig?: boolean } = {}) {
+    public async init({ stdout, dryRun, writeGitmdoulesConfig, submoduleParallelism }: ExecParams & { writeGitmdoulesConfig?: boolean, submoduleParallelism?: number } = {}) {
         if (!this.managed) {
             stdout?.write(Chalk.yellow("Repo not managed, bypassing\n"));
 
@@ -1252,7 +1252,7 @@ export class Config {
             //     this.createUpstream('origin', this.parentSubmodule.url, { stdout, dryRun });
 
             // Initialize submodules
-            await Bluebird.map(this.submodules, submodule => submodule.init({ stdout, dryRun }));
+            await Bluebird.map(this.submodules, submodule => submodule.init({ stdout, dryRun }), submoduleParallelism ? { concurrency: submoduleParallelism } : undefined);
             // const addedSubmodules = await Bluebird.map(this.submodules, submodule => submodule.init({ stdout, dryRun }).then(r => ({ submodule, ...r })), { concurrency: 1 }).filter(s => s.submoduleAdded);
             // if (addedSubmodules.length > 0 && await this.hasStagedChanges({ stdout, dryRun })) {
             //     // await this.stage(['.gitmodules', ...addedSubmodules.map(s => s.submodule.path) ], { stdout, dryRun, force: true });

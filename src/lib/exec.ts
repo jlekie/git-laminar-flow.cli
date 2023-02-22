@@ -1,4 +1,5 @@
 import * as _ from 'lodash';
+import * as Bluebird from 'bluebird';
 import * as Chalk from 'chalk';
 import * as ChildProcess from 'child_process';
 import * as Stream from 'stream';
@@ -22,23 +23,37 @@ export interface InputOptions {
     stdout?: Stream.Writable;
 }
 
-export async function exec(cmd: string, { cwd, stdout, dryRun, echo = true }: ExecOptions = {}) {
+export async function exec(cmd: string, { cwd, stdout, dryRun, echo = true, retries = 3 }: ExecOptions = {}) {
     echo && stdout?.write(Chalk.gray(`${Chalk.cyan(cmd)} [${Path.resolve(cwd ?? '.')}]\n`));
 
     if (dryRun)
         return;
 
-    const proc = ChildProcess.spawn(cmd, { shell: true, cwd });
+    let error;
+    for (let attempt = 0; attempt < retries; attempt++) {
+        try {
+            const proc = ChildProcess.spawn(cmd, { shell: true, cwd });
 
-    return new Promise<void>((resolve, reject) => {
-        proc.stdout.on('data', d => stdout?.write(Chalk.gray(d)));
-        proc.stderr.on('data', d => stdout?.write(Chalk.gray(d)));
+            return await new Promise<void>((resolve, reject) => {
+                proc.stdout.on('data', d => stdout?.write(Chalk.gray(d)));
+                proc.stderr.on('data', d => stdout?.write(Chalk.gray(d)));
+        
+                proc.on('close', (code) => code !== 0 ? reject(new Error(`${cmd} <${Path.resolve(cwd ?? '.')}> Exited with code ${code}`)) : resolve());
+                proc.on('error', (err) => reject(err));
+            });
+        }
+        catch (err) {
+            error = err;
+        }
 
-        proc.on('close', (code) => code !== 0 ? reject(new Error(`${cmd} <${Path.resolve(cwd ?? '.')}> Exited with code ${code}`)) : resolve());
-        proc.on('error', (err) => reject(err));
-    }).catch(err => {
-        throw new Error(`Shell exec failed: ${err}`);
-    });
+        if (attempt < retries - 1) {
+            stdout?.write(Chalk.yellow(`Shell exec failed [${cmd}] (${attempt + 1}/${retries})\n`))
+            await Bluebird.delay(500);
+        }
+    }
+
+    if (error)
+        throw new Error(`Shell exec failed after ${retries} attempts: ${error}`);
 }
 export async function execCmd(cmd: string, { cwd, stdout, dryRun, echo = true, trim = true }: ExecOptions & { trim?: boolean } = {}) {
     echo && stdout?.write(Chalk.gray(`${Chalk.cyan(cmd)} [${Path.resolve(cwd ?? '.')}]\n`));
