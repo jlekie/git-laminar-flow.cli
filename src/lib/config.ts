@@ -1166,7 +1166,7 @@ export class Config {
             else {
                 const originUpstream = this.upstreams.find(r => r.name == 'origin');
                 if (originUpstream) {
-                    await exec(`git clone ${originUpstream.url} ${this.path}`, { stdout, dryRun });
+                    await exec(`git clone ${originUpstream.url} "${this.path}"`, { stdout, dryRun });
 
                     if (await this.exec('git rev-parse HEAD', { stdout, dryRun }).then(() => false).catch(() => true))
                         await exec(`git commit --allow-empty -m "initial commit (GLFCID: ${this.identifier})"`, { cwd: this.path, stdout, dryRun });
