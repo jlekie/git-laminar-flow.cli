@@ -35,6 +35,10 @@ export class InitCommand extends BaseCommand {
     target = Option.String('--target');
     support = Option.String('--support');
 
+    pull = Option.Boolean('--pull', {
+        description: 'Pull latest changes'
+    });
+
     // writeGitmodules = Option.Boolean('--write-gitmodules');
 
     static usage = Command.Usage({
@@ -50,6 +54,10 @@ export class InitCommand extends BaseCommand {
 
         await config.init({ stdout: this.context.stdout, dryRun: this.dryRun, writeGitmdoulesConfig: true, submoduleParallelism: this.parallelism });
         // await Bluebird.map(targetConfigs, async config => config.init({ stdout: this.context.stdout, dryRun: this.dryRun, writeGitmdoulesConfig: true }), this.parallelism ? { concurrency: this.parallelism } : undefined);
+
+        // if (this.pull) {
+        //     const flattenedConfigs = config.flattenConfigs()[0];
+        // }
 
         await Bluebird.mapSeries(targetConfigs, async config => {
             if (this.support) {

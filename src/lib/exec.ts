@@ -30,7 +30,7 @@ export async function exec(cmd: string, { cwd, stdout, dryRun, echo = true, retr
         return;
 
     let error;
-    for (let attempt = 0; attempt < retries; attempt++) {
+    for (let attempt = 0; attempt < retries + 1; attempt++) {
         try {
             const proc = ChildProcess.spawn(cmd, { shell: true, cwd });
 
@@ -46,8 +46,8 @@ export async function exec(cmd: string, { cwd, stdout, dryRun, echo = true, retr
             error = err;
         }
 
-        if (attempt < retries - 1) {
-            stdout?.write(Chalk.yellow(`Shell exec failed [${cmd}] (${attempt + 1}/${retries})\n`))
+        retries && stdout?.write(Chalk.yellow(`Shell exec failed [${cmd}] (${attempt + 1}/${retries})\n`))
+        if (attempt < retries) {
             await Bluebird.delay(500);
         }
     }
@@ -61,7 +61,7 @@ export async function execCmd(cmd: string, { cwd, stdout, dryRun, echo = true, t
     // if (dryRun)
     //     return '';
 
-    return new Promise<string>((resolve, reject) => {
+    return await new Promise<string>((resolve, reject) => {
         ChildProcess.exec(cmd, { cwd }, (err, stdout, stderr) => {
             if (err) {
                 reject(new Error(`Command "${cmd}" [${cwd}] failed [${err}]`));

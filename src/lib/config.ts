@@ -1275,6 +1275,13 @@ export class Config {
             for (const support of this.supports)
                 await support.init({ stdout, dryRun });
 
+            if (await this.isDirty({ stdout, dryRun })) {
+                stdout?.write(Chalk.yellow(`Uncommitted changes for ${this.pathspec}, will not pull latest\n`));
+            }
+            else {
+                await this.pull({ stdout, dryRun });
+            }
+
             // // Save updated config to disk
             // await this.save({ stdout, dryRun });
         }
@@ -1549,6 +1556,9 @@ export class Config {
     public async fetch({ stdout, dryRun }: ExecParams = {}) {
         await exec(`git fetch --all`, { cwd: this.path, stdout, dryRun });
     }
+    public async pull({ stdout, dryRun }: ExecParams = {}) {
+        await exec(`git pull`, { cwd: this.path, stdout, dryRun });
+    }
     public async stage(files: string[], { stdout, dryRun, force }: ExecParams & StageParams = {}) {
         if (!files.length)
             return;
@@ -1610,7 +1620,7 @@ export class Config {
     }
 
     public async isDirty({ stdout, dryRun }: ExecParams = {}) {
-        await exec(`git update-index --refresh`, { cwd: this.path, stdout, dryRun }).catch(() => {});
+        await exec(`git update-index --refresh`, { cwd: this.path, stdout, dryRun, retries: 0 }).catch(() => {});
 
         return await execCmd(`git diff-index --quiet HEAD`, { cwd: this.path, stdout, dryRun })
             .then(() => false)
@@ -2232,18 +2242,18 @@ export class Feature {
     }
 
     public async init({ stdout, dryRun }: ExecParams = {}) {
-        if (!await this.parentConfig.branchExists(this.branchName, { stdout })) {
-            const currentBranch = await this.parentConfig.resolveCurrentBranch({ stdout, dryRun });
+        // if (!await this.parentConfig.branchExists(this.branchName, { stdout })) {
+        //     const currentBranch = await this.parentConfig.resolveCurrentBranch({ stdout, dryRun });
 
-            if (this.upstream && await this.parentConfig.remoteBranchExists(this.branchName, this.upstream, { stdout })) {
-                await exec(`git checkout -b ${this.branchName} ${this.upstream}/${this.branchName}`, { cwd: this.parentConfig.path, stdout, dryRun });
-            }
-            else {
-                await this.parentConfig.createBranch(this.branchName, { source: this.sourceSha, stdout, dryRun });
-            }
+        //     if (this.upstream && await this.parentConfig.remoteBranchExists(this.branchName, this.upstream, { stdout })) {
+        //         await exec(`git checkout -b ${this.branchName} ${this.upstream}/${this.branchName}`, { cwd: this.parentConfig.path, stdout, dryRun });
+        //     }
+        //     else {
+        //         await this.parentConfig.createBranch(this.branchName, { source: this.sourceSha, stdout, dryRun });
+        //     }
 
-            await this.parentConfig.checkoutBranch(currentBranch, { stdout, dryRun });
-        }
+        //     await this.parentConfig.checkoutBranch(currentBranch, { stdout, dryRun });
+        // }
     }
 
     public async branchExists({ stdout }: ExecParams = {}) {
@@ -2367,18 +2377,18 @@ export class Release {
     }
 
     public async init({ stdout, dryRun }: ExecParams = {}) {
-        if (!await this.parentConfig.branchExists(this.branchName, { stdout })) {
-            const currentBranch = await this.parentConfig.resolveCurrentBranch({ stdout, dryRun });
+        // if (!await this.parentConfig.branchExists(this.branchName, { stdout })) {
+        //     const currentBranch = await this.parentConfig.resolveCurrentBranch({ stdout, dryRun });
 
-            if (this.upstream && await this.parentConfig.remoteBranchExists(this.branchName, this.upstream, { stdout })) {
-                await exec(`git checkout -b ${this.branchName} ${this.upstream}/${this.branchName}`, { cwd: this.parentConfig.path, stdout, dryRun });
-            }
-            else {
-                await this.parentConfig.createBranch(this.branchName, { source: this.sourceSha, stdout, dryRun });
-            }
+        //     if (this.upstream && await this.parentConfig.remoteBranchExists(this.branchName, this.upstream, { stdout })) {
+        //         await exec(`git checkout -b ${this.branchName} ${this.upstream}/${this.branchName}`, { cwd: this.parentConfig.path, stdout, dryRun });
+        //     }
+        //     else {
+        //         await this.parentConfig.createBranch(this.branchName, { source: this.sourceSha, stdout, dryRun });
+        //     }
 
-            await this.parentConfig.checkoutBranch(currentBranch, { stdout, dryRun });
-        }
+        //     await this.parentConfig.checkoutBranch(currentBranch, { stdout, dryRun });
+        // }
     }
 
     public async branchExists({ stdout }: ExecParams = {}) {
@@ -2504,18 +2514,18 @@ export class Hotfix {
     }
 
     public async init({ stdout, dryRun }: ExecParams = {}) {
-        if (!await this.parentConfig.branchExists(this.branchName, { stdout })) {
-            const currentBranch = await this.parentConfig.resolveCurrentBranch({ stdout, dryRun });
+        // if (!await this.parentConfig.branchExists(this.branchName, { stdout })) {
+        //     const currentBranch = await this.parentConfig.resolveCurrentBranch({ stdout, dryRun });
 
-            if (this.upstream && await this.parentConfig.remoteBranchExists(this.branchName, this.upstream, { stdout })) {
-                await exec(`git checkout -b ${this.branchName} ${this.upstream}/${this.branchName}`, { cwd: this.parentConfig.path, stdout, dryRun });
-            }
-            else {
-                await this.parentConfig.createBranch(this.branchName, { source: this.sourceSha, stdout, dryRun });
-            }
+        //     if (this.upstream && await this.parentConfig.remoteBranchExists(this.branchName, this.upstream, { stdout })) {
+        //         await exec(`git checkout -b ${this.branchName} ${this.upstream}/${this.branchName}`, { cwd: this.parentConfig.path, stdout, dryRun });
+        //     }
+        //     else {
+        //         await this.parentConfig.createBranch(this.branchName, { source: this.sourceSha, stdout, dryRun });
+        //     }
 
-            await this.parentConfig.checkoutBranch(currentBranch, { stdout, dryRun });
-        }
+        //     await this.parentConfig.checkoutBranch(currentBranch, { stdout, dryRun });
+        // }
     }
 
     public async branchExists({ stdout }: ExecParams = {}) {
@@ -2642,31 +2652,31 @@ export class Support {
     }
 
     public async init({ stdout, dryRun }: ExecParams = {}) {
-        if (!await this.parentConfig.branchExists(this.masterBranchName, { stdout })) {
-            const currentBranch = await this.parentConfig.resolveCurrentBranch({ stdout, dryRun });
+        // if (!await this.parentConfig.branchExists(this.masterBranchName, { stdout })) {
+        //     const currentBranch = await this.parentConfig.resolveCurrentBranch({ stdout, dryRun });
 
-            if (this.upstream && await this.parentConfig.remoteBranchExists(this.masterBranchName, this.upstream, { stdout })) {
-                await exec(`git checkout -b ${this.masterBranchName} ${this.upstream}/${this.masterBranchName}`, { cwd: this.parentConfig.path, stdout, dryRun });
-            }
-            else {
-                await this.parentConfig.createBranch(this.masterBranchName, { source: this.sourceSha, stdout, dryRun });
-            }
+        //     if (this.upstream && await this.parentConfig.remoteBranchExists(this.masterBranchName, this.upstream, { stdout })) {
+        //         await exec(`git checkout -b ${this.masterBranchName} ${this.upstream}/${this.masterBranchName}`, { cwd: this.parentConfig.path, stdout, dryRun });
+        //     }
+        //     else {
+        //         await this.parentConfig.createBranch(this.masterBranchName, { source: this.sourceSha, stdout, dryRun });
+        //     }
 
-            await this.parentConfig.checkoutBranch(currentBranch, { stdout, dryRun });
-        }
+        //     await this.parentConfig.checkoutBranch(currentBranch, { stdout, dryRun });
+        // }
 
-        if (!await this.parentConfig.branchExists(this.developBranchName, { stdout })) {
-            const currentBranch = await this.parentConfig.resolveCurrentBranch({ stdout, dryRun });
+        // if (!await this.parentConfig.branchExists(this.developBranchName, { stdout })) {
+        //     const currentBranch = await this.parentConfig.resolveCurrentBranch({ stdout, dryRun });
 
-            if (this.upstream && await this.parentConfig.remoteBranchExists(this.developBranchName, this.upstream, { stdout })) {
-                await exec(`git checkout -b ${this.developBranchName} ${this.upstream}/${this.developBranchName}`, { cwd: this.parentConfig.path, stdout, dryRun });
-            }
-            else {
-                await this.parentConfig.createBranch(this.developBranchName, { source: this.sourceSha, stdout, dryRun });
-            }
+        //     if (this.upstream && await this.parentConfig.remoteBranchExists(this.developBranchName, this.upstream, { stdout })) {
+        //         await exec(`git checkout -b ${this.developBranchName} ${this.upstream}/${this.developBranchName}`, { cwd: this.parentConfig.path, stdout, dryRun });
+        //     }
+        //     else {
+        //         await this.parentConfig.createBranch(this.developBranchName, { source: this.sourceSha, stdout, dryRun });
+        //     }
 
-            await this.parentConfig.checkoutBranch(currentBranch, { stdout, dryRun });
-        }
+        //     await this.parentConfig.checkoutBranch(currentBranch, { stdout, dryRun });
+        // }
 
         // Initialize features
         for (const feature of this.features)
