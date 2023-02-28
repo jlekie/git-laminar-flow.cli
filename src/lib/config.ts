@@ -1134,8 +1134,9 @@ export class Config {
             stdout?.write(Chalk.yellow("Repo not managed, bypassing\n"));
 
             // Initialize submodules
-            for (const submodule of this.submodules)
-                await submodule.init({ stdout, dryRun });
+            await Bluebird.map(this.submodules, submodule => submodule.init({ stdout, dryRun }), submoduleParallelism ? { concurrency: submoduleParallelism } : undefined);
+            // for (const submodule of this.submodules)
+            //     await submodule.init({ stdout, dryRun });
         }
         else {
             // Either perform fetch for existing repo or clone/initialize new repo

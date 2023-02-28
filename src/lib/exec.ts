@@ -46,7 +46,7 @@ export async function exec(cmd: string, { cwd, stdout, dryRun, echo = true, retr
             error = err;
         }
 
-        retries && stdout?.write(Chalk.yellow(`Shell exec failed [${cmd}] (${attempt + 1}/${retries})\n`))
+        retries && stdout?.write(Chalk.yellow(`Shell exec failed [${cmd}] (${attempt + 1}/${retries + 1})\n`))
         if (attempt < retries) {
             await Bluebird.delay(500);
         }

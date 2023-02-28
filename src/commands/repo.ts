@@ -27,7 +27,7 @@ export class InitCommand extends BaseCommand {
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');
 
-    parallelism = Option.String('--parallelism,--concurrency', {
+    parallelism = Option.String('--parallelism,--concurrency', '4', {
         validator: Typanion.isNumber(),
         description: 'Max number of concurrent submodule initializations'
     });
