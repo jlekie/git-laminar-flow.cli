@@ -1276,11 +1276,13 @@ export class Config {
             for (const support of this.supports)
                 await support.init({ stdout, dryRun });
 
-            if (await this.isDirty({ stdout, dryRun })) {
-                stdout?.write(Chalk.yellow(`Uncommitted changes for ${this.pathspec}, will not pull latest\n`));
-            }
-            else {
-                await this.pull({ stdout, dryRun });
+            if (this.upstreams.length > 0) {
+                if (await this.isDirty({ stdout, dryRun })) {
+                    stdout?.write(Chalk.yellow(`Uncommitted changes for ${this.pathspec}, will not pull latest\n`));
+                }
+                else {
+                    await this.pull({ stdout, dryRun });
+                }
             }
 
             // // Save updated config to disk

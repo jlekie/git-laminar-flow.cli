@@ -64,7 +64,7 @@ export class InitCommand extends BaseCommand {
                 const support = await config.trySetActiveSupport(this.support);
 
                 if (support && !this.target)
-                    config.checkoutBranch(support.developBranchName, { stdout: this.context.stdout, dryRun: this.dryRun });
+                    await config.checkoutBranch(support.developBranchName, { stdout: this.context.stdout, dryRun: this.dryRun });
             }
 
             if (this.target) {
