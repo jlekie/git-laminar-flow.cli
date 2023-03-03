@@ -1,0 +1,18 @@
+labels:
+  app.cohesion.io/name: git-laminar-flow
+  app.cohesion.io/platform: nodejs
+  app.cohesion.io/platform/language: typescript
+  app.cohesion.io/platform/pms: yarn
+tasks:
+  - name: build
+    actions:
+      - type: exec
+        cmd: yarn build
+  - name: watch
+    actions:
+      - type: exec
+        cmd: yarn watch
+  - name: publish
+    actions:
+      - type: exec
+        cmd: yarn publish
