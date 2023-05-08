@@ -9,7 +9,7 @@ import * as Chalk from 'chalk';
 
 import * as Prompts from 'prompts';
 
-import { BaseCommand, BaseInteractiveCommand, AnswersSchema } from './common';
+import { BaseCommand, BaseInteractiveCommand, AnswersSchema, OverridablePromptAnswerTypes } from './common';
 
 import { loadV2Config, Config, Release, Support } from '../lib/config';
 import { createSupport, deleteSupport } from '../lib/actions';
@@ -96,7 +96,8 @@ export class CreateInteractiveCommand extends BaseInteractiveCommand {
             }, {
                 pathspecPrefix: config.pathspec,
                 defaultValue: true,
-                interactivity: 2
+                interactivity: 2,
+                answerType: OverridablePromptAnswerTypes.Boolean
             }),
             upstream: ({ config }) => this.createOverridablePrompt('upstream', value => Zod.string().nullable().transform(v => v ?? undefined).parse(value), (initial) => ({
                 type: 'select',

@@ -284,16 +284,18 @@ export async function createSupport(rootConfig: Config, { stdout, dryRun, ...par
         config.supports.push(support);
         await support.register(config);
 
-        await support.init({ stdout: stdout, dryRun: dryRun });
-        await config.save({ stdout: stdout, dryRun: dryRun });
+        await support.initNew({ stdout: stdout, dryRun: dryRun });
+
+        // await support.init({ stdout: stdout, dryRun: dryRun });
+        // await config.save({ stdout: stdout, dryRun: dryRun });
 
         // if (checkout === 'develop')
         //     await config.checkoutBranch(support.developBranchName, { stdout: stdout, dryRun: dryRun, retries: 3 });
         // else if (checkout === 'master')
         //     await config.checkoutBranch(support.masterBranchName, { stdout: stdout, dryRun: dryRun, retries: 3 });
 
-        if (activate)
-            await config.setStateValue('activeSupport', supportName);
+        // if (activate)
+        //     await config.setStateValue('activeSupport', supportName);
     });
 }
 

@@ -1276,7 +1276,7 @@ export class Config {
             for (const support of this.supports)
                 await support.init({ stdout, dryRun });
 
-            if (this.upstreams.length > 0) {
+            if ((await this.remoteBranchExists(await this.resolveCurrentBranch({ stdout, dryRun }), 'origin', { stdout, dryRun }))) {
                 if (await this.isDirty({ stdout, dryRun })) {
                     stdout?.write(Chalk.yellow(`Uncommitted changes for ${this.pathspec}, will not pull latest\n`));
                 }
@@ -2692,6 +2692,40 @@ export class Support {
         // Initialize hotfixes
         for (const hotfix of this.hotfixes)
             await hotfix.init({ stdout, dryRun });
+    }
+
+    public async initNew({ stdout, dryRun }: ExecParams = {}) {
+        if (!await this.parentConfig.branchExists(this.masterBranchName, { stdout })) {
+            const currentBranch = await this.parentConfig.resolveCurrentBranch({ stdout, dryRun });
+
+            if (this.upstream && await this.parentConfig.remoteBranchExists(this.masterBranchName, this.upstream, { stdout })) {
+                await exec(`git checkout -b ${this.masterBranchName} ${this.upstream}/${this.masterBranchName}`, { cwd: this.parentConfig.path, stdout, dryRun });
+            }
+            else {
+                await this.parentConfig.createBranch(this.masterBranchName, { source: this.sourceSha, stdout, dryRun });
+
+                if (this.upstream)
+                    await this.parentConfig.exec(`git push -u ${this.upstream} ${this.masterBranchName}`, { stdout, dryRun });
+            }
+
+            await this.parentConfig.checkoutBranch(currentBranch, { stdout, dryRun });
+        }
+
+        if (!await this.parentConfig.branchExists(this.developBranchName, { stdout })) {
+            const currentBranch = await this.parentConfig.resolveCurrentBranch({ stdout, dryRun });
+
+            if (this.upstream && await this.parentConfig.remoteBranchExists(this.developBranchName, this.upstream, { stdout })) {
+                await exec(`git checkout -b ${this.developBranchName} ${this.upstream}/${this.developBranchName}`, { cwd: this.parentConfig.path, stdout, dryRun });
+            }
+            else {
+                await this.parentConfig.createBranch(this.developBranchName, { source: this.sourceSha, stdout, dryRun });
+
+                if (this.upstream)
+                    await this.parentConfig.exec(`git push -u ${this.upstream} ${this.developBranchName}`, { stdout, dryRun });
+            }
+
+            await this.parentConfig.checkoutBranch(currentBranch, { stdout, dryRun });
+        }
     }
 
     public async deleteFeature(feature: Feature) {
