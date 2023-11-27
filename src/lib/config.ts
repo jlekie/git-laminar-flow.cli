@@ -783,7 +783,10 @@ export class Config {
         const match = async (uri: string) => {
             const [ type, pattern ] = uri.split('://', 2);
 
-            if (type === 'repo') {
+            if (type === 'modified') {
+                return await this.isDirty();
+            }
+            else if (type === 'repo') {
                 return Minimatch(this.pathspec, pattern);
             }
             else if (type === 'submodule' && this.parentSubmodule) {
@@ -810,6 +813,12 @@ export class Config {
                 else if (type === 'tag') {
                     const tags = [ ...this.tags, ...(this.parentSubmodule?.tags ?? []) ];
                     return tags.some(tag => Minimatch(tag, pattern));
+                }
+                else if (type === 'label') {
+                    const [ key, value ] = pattern.split('=');
+
+                    const labels = this.normalizeLabels();
+                    return labels[key]?.some(v => v === value);
                 }
             }
 
@@ -1314,6 +1323,11 @@ export class Config {
 
         const sourceConfigPath = Path.join(this.path, '.glf', 'source_config.yml');
         await FS.outputFile(sourceConfigPath, Yaml.dump(this.toHash()), {
+            encoding: 'utf8'
+        });
+
+        const sourceConfigExpandedPath = Path.join(this.path, '.glf', 'source_config.normalized.yml');
+        await FS.outputFile(sourceConfigExpandedPath, Yaml.dump(this.toContextHash()), {
             encoding: 'utf8'
         });
     }

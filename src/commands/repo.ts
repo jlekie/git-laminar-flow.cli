@@ -1387,6 +1387,9 @@ export class IncrementVersionCommand extends BaseInteractiveCommand {
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');
 
+    cascadeInclude = Option.Array('--cascade-include');
+    cascadeExclude = Option.Array('--cascade-exclude');
+
     type = Option.String('--type', 'prerelease', {
         description: 'Type type of version increment to use'
     });

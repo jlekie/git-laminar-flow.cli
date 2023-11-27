@@ -424,6 +424,7 @@ export async function deleteSupport(rootConfig: Config, { stdout, dryRun, ...par
     const supportName = await params.name();
 
     const allConfigs = await Bluebird.filter(rootConfig.flattenConfigs(), c => c.hasElement(`support://${supportName}`));
+
     if (!allConfigs.length)
         return;
 
@@ -661,6 +662,7 @@ export async function closeRelease(rootConfig: Config, { stdout, dryRun, ...para
     commitMessage?: ActionParam<MessageTemplate | undefined, { config: Config, messages: MessageTemplate[] }>;
     stagedFiles?: ActionParam<string[], { config: Config, statuses: Awaited<ReturnType<Config['resolveStatuses']>> }>;
     tags?: ActionParam<TagTemplate[], { config: Config, templates: TagTemplate[] }>;
+    push?: ActionParam<boolean, { config: Config }>;
 }>) {
     const releases = await Bluebird.map(rootConfig.flattenConfigs(), async config => {
             const support = await config.resolveActiveSupport();
@@ -1311,74 +1313,93 @@ export async function sync(rootConfig: Config, { stdout, dryRun, ...params }: Ac
     configs: ActionParam<Config[], { configs: Config[] }>;
     push: ActionParam<boolean>;
 }>) {
-    const allConfigs = rootConfig.flattenConfigs();
-    const statuses = await Bluebird.map(allConfigs, async config => {
-        if (!config.managed)
-            return;
+    const allConfigs = rootConfig.flattenConfigs().filter(c => c.managed);
+    const configs = await params.configs({ configs: allConfigs });
 
-        await config.fetch({ stdout, dryRun });
+    await Bluebird.map(configs, async config => {
+        await config.swapCheckout(config.resolveMasterBranchName(), async () => {
+            await config.pull({ stdout, dryRun });
 
-        const master = await config.resolveBranchStatus(config.resolveMasterBranchName(), 'origin', { stdout });
-        const develop = await config.resolveBranchStatus(config.resolveDevelopBranchName(), 'origin', { stdout });
+            if (params.push())
+                await config.push('origin', config.resolveMasterBranchName(), { stdout, dryRun });
+        });
 
-        const features = await Bluebird
-            .map(config.features, feature => feature.upstream ? config.resolveBranchStatus(feature.branchName, feature.upstream, { stdout }) : undefined)
-            .then(s => _.compact(s));
-        const supports = [
-            ...await Bluebird
-                .map(config.supports, support => support.upstream ? config.resolveBranchStatus(support.masterBranchName, develop.upstream, { stdout }) : undefined)
-                .then(s => _.compact(s)),
-            ...await Bluebird
-                .map(config.supports, support => support.upstream ? config.resolveBranchStatus(support.developBranchName, develop.upstream, { stdout }) : undefined)
-                .then(s => _.compact(s))
-        ];
+        await config.swapCheckout(config.resolveDevelopBranchName(), async () => {
+            await config.pull({ stdout, dryRun });
 
-        return {
-            identifier: config.identifier,
-            master,
-            develop,
-            features,
-            supports,
-            applicable: master.differs || develop.differs || features.some(f => f.differs) || supports.some(s => s.differs)
-        };
-    }).then(statuses => _(statuses).compact().keyBy(s => s.identifier).value());
+            if (params.push())
+                await config.push('origin', config.resolveDevelopBranchName(), { stdout, dryRun });
+        });
+    });
 
-    const applicableConfigs = allConfigs.filter(c => statuses[c.identifier]?.applicable)
-    if (!applicableConfigs.length)
-        return;
+    // const allConfigs = rootConfig.flattenConfigs();
+    // const statuses = await Bluebird.map(allConfigs, async config => {
+    //     if (!config.managed)
+    //         return;
 
-    const configs = await params.configs({ configs: applicableConfigs });
-    for await (const groupedConfigs of iterateTopologicallyNonMapped(allConfigs, (item, parent) => item.parentConfig === parent, {
-        filter: config => configs.some(c => c === config)
-    })) {
-        await Bluebird.map(Bluebird.mapSeries(groupedConfigs, async config => ({
-            config,
-            // stagedFiles: await params.stagedFiles({ config, statuses: await config.resolveStatuses({ stdout, dryRun }) }),
-            // message: await params.message({ config })
-        })), async ({ config }) => {
-            const status = statuses[config.identifier];
+    //     await config.fetch({ stdout, dryRun });
 
-            const processStatus = async (branchStatus: Awaited<ReturnType<Config['resolveBranchStatus']>>) => {
-                if (branchStatus.differs) {
-                    await config.checkout(branchStatus.branchName, async () => {
-                        if (await branchStatus.resolveCommitsBehind({ stdout }) > 0)
-                            // await config.exec(`git merge ${branchStatus.upstreamBranchName}`, { stdout, dryRun });
-                            await config.exec(`git pull ${branchStatus.upstream} ${branchStatus.branchName}`, { stdout, dryRun });
-                        if (await params.push() && (!branchStatus.upstreamBranchExists || await branchStatus.resolveCommitsAhead({ stdout }) > 0))
-                            await config.exec(`git push -u ${branchStatus.upstream} ${branchStatus.branchName}`, { stdout, dryRun });
-                    }, { stdout, dryRun });
-                }
-            }
+    //     const master = await config.resolveBranchStatus(config.resolveMasterBranchName(), 'origin', { stdout });
+    //     const develop = await config.resolveBranchStatus(config.resolveDevelopBranchName(), 'origin', { stdout });
 
-            await processStatus(status.master);
-            await processStatus(status.develop);
+    //     const features = await Bluebird
+    //         .map(config.features, feature => feature.upstream ? config.resolveBranchStatus(feature.branchName, feature.upstream, { stdout }) : undefined)
+    //         .then(s => _.compact(s));
+    //     const supports = [
+    //         ...await Bluebird
+    //             .map(config.supports, support => support.upstream ? config.resolveBranchStatus(support.masterBranchName, develop.upstream, { stdout }) : undefined)
+    //             .then(s => _.compact(s)),
+    //         ...await Bluebird
+    //             .map(config.supports, support => support.upstream ? config.resolveBranchStatus(support.developBranchName, develop.upstream, { stdout }) : undefined)
+    //             .then(s => _.compact(s))
+    //     ];
 
-            for (const feature of status.features)
-                await processStatus(feature);
-            for (const support of status.supports)
-                await processStatus(support);
-        }, { concurrency: 1 });
-    }
+    //     return {
+    //         identifier: config.identifier,
+    //         master,
+    //         develop,
+    //         features,
+    //         supports,
+    //         applicable: master.differs || develop.differs || features.some(f => f.differs) || supports.some(s => s.differs)
+    //     };
+    // }).then(statuses => _(statuses).compact().keyBy(s => s.identifier).value());
+
+    // const applicableConfigs = allConfigs.filter(c => statuses[c.identifier]?.applicable)
+    // if (!applicableConfigs.length)
+    //     return;
+
+    // const configs = await params.configs({ configs: applicableConfigs });
+    // for await (const groupedConfigs of iterateTopologicallyNonMapped(allConfigs, (item, parent) => item.parentConfig === parent, {
+    //     filter: config => configs.some(c => c === config)
+    // })) {
+    //     await Bluebird.map(Bluebird.mapSeries(groupedConfigs, async config => ({
+    //         config,
+    //         // stagedFiles: await params.stagedFiles({ config, statuses: await config.resolveStatuses({ stdout, dryRun }) }),
+    //         // message: await params.message({ config })
+    //     })), async ({ config }) => {
+    //         const status = statuses[config.identifier];
+
+    //         const processStatus = async (branchStatus: Awaited<ReturnType<Config['resolveBranchStatus']>>) => {
+    //             if (branchStatus.differs) {
+    //                 await config.checkout(branchStatus.branchName, async () => {
+    //                     if (await branchStatus.resolveCommitsBehind({ stdout }) > 0)
+    //                         // await config.exec(`git merge ${branchStatus.upstreamBranchName}`, { stdout, dryRun });
+    //                         await config.exec(`git pull ${branchStatus.upstream} ${branchStatus.branchName}`, { stdout, dryRun });
+    //                     if (await params.push() && (!branchStatus.upstreamBranchExists || await branchStatus.resolveCommitsAhead({ stdout }) > 0))
+    //                         await config.exec(`git push -u ${branchStatus.upstream} ${branchStatus.branchName}`, { stdout, dryRun });
+    //                 }, { stdout, dryRun });
+    //             }
+    //         }
+
+    //         await processStatus(status.master);
+    //         await processStatus(status.develop);
+
+    //         for (const feature of status.features)
+    //             await processStatus(feature);
+    //         for (const support of status.supports)
+    //             await processStatus(support);
+    //     }, { concurrency: 1 });
+    // }
 }
 
 export async function createSubmodule(config: Config, { stdout, dryRun, ...params }: ActionParams<{

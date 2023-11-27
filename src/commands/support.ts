@@ -48,7 +48,7 @@ export class CreateInteractiveCommand extends BaseInteractiveCommand {
                 initial
             }), {
                 pathspecPrefix: config.pathspec,
-                defaultValue: 'branch://master',
+                defaultValue: 'branch://develop',
                 interactivity: 2
             }),
             masterBranchName: ({ config, supportName }) => this.createOverridablePrompt('masterBranchName', value => Zod.string().parse(value), (initial) => ({
