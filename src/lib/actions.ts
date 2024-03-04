@@ -1526,6 +1526,7 @@ export async function incrementVersion(rootConfig: Config, { stdout, dryRun, ...
     prereleaseIdentifier: ActionParam<string, { config: Config }>;
     cascade?: ActionParam<boolean>;
     cascadeConfigs: ActionParam<Config[], { configs: { config: Config, version?: string }[] }>;
+    commit?: ActionParam<boolean>;
 }>) {
     const allConfigs = rootConfig.flattenConfigs().filter(c => c.managed);
     const configs = await params.configs({ configs: await Bluebird.map(allConfigs, async config => ({ config, version: await config.resolveCurrentArtifactVersion(true) })) });

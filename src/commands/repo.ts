@@ -1386,6 +1386,7 @@ export class IncrementVersionCommand extends BaseInteractiveCommand {
 
     include = Option.Array('--include');
     exclude = Option.Array('--exclude');
+    selected = Option.Array('--selected');
 
     cascadeInclude = Option.Array('--cascade-include');
     cascadeExclude = Option.Array('--cascade-exclude');
@@ -1396,7 +1397,7 @@ export class IncrementVersionCommand extends BaseInteractiveCommand {
     prereleaseIdentifier = Option.String('--prerelease-identifier', 'alpha', {
         description: 'Identifier to use for prerelease versions'
     });
-    cascade = Option.Boolean('--cascade', false, {
+    cascade = Option.Boolean('--cascade', {
         description: 'Cascade version change across dependents'
     });
 
@@ -1407,24 +1408,31 @@ export class IncrementVersionCommand extends BaseInteractiveCommand {
 
     public async executeCommand() {
         const rootConfig = await this.loadConfig();
-        const targetConfigs = await rootConfig.resolveFilteredConfigs({
+        const filteredConfigs = await rootConfig.resolveFilteredConfigs({
             included: this.include,
             excluded: this.exclude
         });
+        // const targetConfigs = this.selected ? await rootConfig.resolveFilteredConfigs({
+        //     included: this.selected
+        // }) : false;
 
         await incrementVersion(rootConfig, {
             configs: async ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.map(c => c.config).find(c => c.identifier === id)).compact().value()).parse(value), (initial) => ({
                 type: 'multiselect',
                 message: 'Select Modules',
-                choices: configs.map(c => ({ title: `${c.config.pathspec} [${c.version}]`, value: c.config.identifier, selected: initial?.some(tc => tc === c.config.identifier) }))
+                choices: configs.filter(c => {
+                    return filteredConfigs.some(cc => cc.identifier == c.config.identifier);
+                }).map(c => ({ title: `${c.config.pathspec} [${c.version}]`, value: c.config.identifier, selected: initial?.some(tc => tc === c.config.identifier) }))
             }), {
                 answerType: OverridablePromptAnswerTypes.StringArray,
-                defaultValue: targetConfigs.map(c => c.identifier)
+                defaultValue: [] //targetConfigs.map(c => c.identifier)
             }),
             cascadeConfigs: async ({ configs }) => this.createOverridablePrompt('configs', value => Zod.string().array().transform(ids => _(ids).map(id => configs.map(c => c.config).find(c => c.identifier === id)).compact().value()).parse(value), (initial) => ({
                 type: 'multiselect',
                 message: 'Select Cascaded Modules',
-                choices: configs.map(c => ({ title: `${c.config.pathspec} [${c.version}]`, value: c.config.identifier, selected: initial?.some(tc => tc === c.config.identifier) }))
+                choices: configs.filter(c => {
+                    return filteredConfigs.some(cc => cc.identifier == c.config.identifier);
+                }).map(c => ({ title: `${c.config.pathspec} [${c.version}]`, value: c.config.identifier, selected: initial?.some(tc => tc === c.config.identifier) }))
             }), {
                 answerType: OverridablePromptAnswerTypes.StringArray,
                 defaultValue: configs.map(c => c.config.identifier)
@@ -1460,6 +1468,7 @@ export class IncrementVersionCommand extends BaseInteractiveCommand {
                 initial
             }), {
                 defaultValue: this.cascade,
+                interactivity: this.cascade ? 2 : undefined
             }),
             stdout: this.context.stdout,
             dryRun: this.dryRun
